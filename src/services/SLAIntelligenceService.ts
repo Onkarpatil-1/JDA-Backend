@@ -7,6 +7,12 @@ import {
 import { createPredictionPrompt, PREDICTION_SYSTEM_PROMPT } from '../prompts/prediction.js';
 import { createAlertPrompt, ALERT_SYSTEM_PROMPT } from '../prompts/alerts.js';
 import { CHATBOT_SYSTEM_PROMPT } from '../prompts/chatbot.js';
+import {
+    calculateMean,
+    calculateStdDev,
+    calculateTrend,
+    calculateAverageChange
+} from '../utils/mathUtils.js';
 import type {
     MetricData,
     TimeSeriesData,
@@ -35,7 +41,21 @@ export class SLAIntelligenceService {
         current: MetricData,
         historical: TimeSeriesData
     ): Promise<AnomalyResult> {
-        const prompt = createAnomalyDetectionPrompt(current, historical);
+        // Perform calculations in service layer
+        const mean = calculateMean(historical.values);
+        const stdDev = calculateStdDev(historical.values, mean);
+        const zScore = (stdDev === 0) ? 0 : (current.value - mean) / stdDev;
+
+        const prompt = createAnomalyDetectionPrompt({
+            metricName: current.metricName,
+            currentValue: current.value,
+            timestamp: current.timestamp,
+            historicalMean: mean.toFixed(2),
+            historicalStdDev: stdDev.toFixed(2),
+            calculatedZScore: zScore.toFixed(2),
+            sampleSize: historical.values.length,
+            recentValues: historical.values.slice(-10).join(', ')
+        });
 
         const response = await this.ollamaService.generate(prompt, {
             systemPrompt: ANOMALY_DETECTION_SYSTEM_PROMPT,
@@ -62,7 +82,24 @@ export class SLAIntelligenceService {
         historical: TimeSeriesData,
         horizonDays: number = 3
     ): Promise<PredictionResult> {
-        const prompt = createPredictionPrompt(historical, horizonDays);
+        // Perform calculations in service layer
+        const recentValues = historical.values.slice(-14);
+        const trend = calculateTrend(recentValues);
+        const avgChange = calculateAverageChange(recentValues);
+        const mean7Day = calculateMean(recentValues.slice(-7));
+
+        const prompt = createPredictionPrompt({
+            metricName: historical.metricName,
+            unit: historical.unit || 'N/A',
+            dataPoints: historical.values.length,
+            recentValues: recentValues.join(', '),
+            recentTimestamps: historical.timestamps.slice(-14).join(', '),
+            trend: trend,
+            avgDailyChange: avgChange.toFixed(2),
+            currentValue: recentValues[recentValues.length - 1],
+            sevenDayAvg: mean7Day.toFixed(2),
+            horizonDays: horizonDays
+        });
 
         const response = await this.ollamaService.generate(prompt, {
             systemPrompt: PREDICTION_SYSTEM_PROMPT,

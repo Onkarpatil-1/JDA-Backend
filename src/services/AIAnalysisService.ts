@@ -1,5 +1,11 @@
 import { OllamaService } from './OllamaService.js';
 import type { ProjectStatistics, AIInsights } from '../types/index.js';
+import {
+    createAnomalyAnalysisPrompt,
+    createBottleneckPredictionPrompt,
+    createTabularInsightsPrompt,
+    createRecommendationsPrompt
+} from '../prompts/analysis.js';
 
 /**
  * AI-powered analysis service using LLM for intelligent insights
@@ -51,36 +57,17 @@ export class AIAnalysisService {
             .map(a => `- Ticket ${a.id}: ${a.service} (${a.role}) - ${a.delay} days delay`)
             .join('\n');
 
-        const prompt = `You are an expert SLA workflow analyst. Analyze these specific anomalies and performance data:
-
-Project Statistics:
-- Total Anomalies: ${statistics.anomalyCount}
-- Average Processing Time: ${statistics.avgDaysRested.toFixed(1)} days
-- Max Processing Time: ${statistics.maxDaysRested} days
-- Standard Deviation: ${statistics.stdDaysRested.toFixed(1)} days
-
-Top Performing Employees:
-${topPerformersStr || 'None identified'}
-
-High-Risk Applications & Services:
-${highRiskAppsStr || 'None identified'}
-
-Critical Bottleneck:
-- Role: ${statistics.criticalBottleneck?.role || 'None'}
-- Cases: ${statistics.criticalBottleneck?.cases || 0}
-- Average Delay: ${statistics.criticalBottleneck?.avgDelay?.toFixed(1) || 0} days
-
-Task: Identify common patterns and suggest a specific root cause. 
-IMPORTANT: 
-- Use actual names of employees, services, and roles.
-- NO preamble or conversational filler.
-- PATTERNS: Max 3 bullet points, 15 words each.
-- ROOT CAUSE: Max 1 punchy sentence.
-- Use bold markdown for key names.
-
-Format:
-PATTERNS: [Bullet list]
-ROOT CAUSE: [Punchy sentence]`;
+        const prompt = createAnomalyAnalysisPrompt({
+            anomalyCount: statistics.anomalyCount,
+            avgProcessingTime: statistics.avgDaysRested.toFixed(1),
+            maxProcessingTime: statistics.maxDaysRested,
+            stdDev: statistics.stdDaysRested.toFixed(1),
+            topPerformers: topPerformersStr,
+            highRiskApps: highRiskAppsStr,
+            bottleneckRole: statistics.criticalBottleneck?.role || 'None',
+            bottleneckCases: statistics.criticalBottleneck?.cases || 0,
+            bottleneckAvgDelay: statistics.criticalBottleneck?.avgDelay?.toFixed(1) || '0'
+        });
 
         const response = await this.ollamaService.generate(prompt);
         const responseText = response.content;
@@ -103,33 +90,18 @@ ROOT CAUSE: [Punchy sentence]`;
             .map(a => `- ${a.service} (Ticket ${a.id}) in ${a.zone}: ${a.delay} days delay`)
             .join('\n');
 
-        const prompt = `You are an expert SLA workflow predictor. Predict future bottlenecks based on this data:
-
-Current Metrics:
-- Completion Rate: ${statistics.completionRate.toFixed(1)}%
-- Critical Bottleneck: ${statistics.criticalBottleneck?.role || 'None'}
-- Threshold Exceeded: ${statistics.criticalBottleneck?.thresholdExceeded || 0}%
-
-Zone Performance:
-${statistics.zonePerformance.slice(0, 3).map((z, i) =>
-            `- ${z.name}: ${z.avgTime.toFixed(1)} days avg time`
-        ).join('\n')}
-
-Role/Dept Performance:
-${statistics.deptPerformance.slice(0, 3).map((d, i) =>
-            `- ${d.name}: ${d.avgTime.toFixed(1)} days avg wait`
-        ).join('\n')}
-
-Specific At-Risk Cases:
-${highRiskAppsStr}
-
-Task: Predict likely bottlenecks in the next 30 days. 
-IMPORTANT: 
-- Max 2 bullet points.
-- Use names of services, zones, and roles.
-- Be extremely blunt and direct.
-
-PREDICTION:`;
+        const prompt = createBottleneckPredictionPrompt({
+            completionRate: statistics.completionRate.toFixed(1),
+            bottleneckRole: statistics.criticalBottleneck?.role || 'None',
+            thresholdExceeded: statistics.criticalBottleneck?.thresholdExceeded || 0,
+            zonePerformance: statistics.zonePerformance.slice(0, 3).map((z, i) =>
+                `- ${z.name}: ${z.avgTime.toFixed(1)} days avg time`
+            ).join('\n'),
+            deptPerformance: statistics.deptPerformance.slice(0, 3).map((d, i) =>
+                `- ${d.name}: ${d.avgTime.toFixed(1)} days avg wait`
+            ).join('\n'),
+            highRiskApps: highRiskAppsStr
+        });
 
         const response = await this.ollamaService.generate(prompt);
         const predictions = response.content.replace(/^PREDICTION:\s*/i, '').trim();
@@ -145,6 +117,7 @@ PREDICTION:`;
         zoneEfficiencyTable: string;
         breachRiskTable: string;
         highPriorityTable: string;
+        behavioralRedFlagsTable: string;
     }> {
         const topPerformersStr = statistics.topPerformers
             .map(p => `- ${p.name} (${p.role}): ${p.tasks} tasks, ${p.avgTime} days avg`)
@@ -172,49 +145,12 @@ PREDICTION:`;
             .map(f => `- [${f.type}] ${f.entity}: ${f.evidence}`)
             .join('\n');
 
-        const prompt = `You are a Senior SLA Diagnostic Auditor. Your goal is to find the LOGICAL REASON for delays and identify INTERNAL RED FLAGS where employees may be forcefully delaying tickets.
- 
-Employee Context:
-${topPerformersStr}
-
-Behavioral Red Flags (Data-Detected):
-${behaviorStr || 'No obvious behavioral anomalies detected.'}
-
-Zone Context:
-${zonePerfStr}
-
-Detailed At-Risk Applications (with History):
-${riskAppsStr}
-
-Task: Generate 5 diagnostic tables. 
-CRITICAL: Analyze the remarks. If a ticket is stuck, look at the last remark to determine the "Root Constraint". 
-DETECT FORCEFUL DELAYS: If an employee uses the same generic remark (e.g., "Verification Pending") repeatedly for most of their cases, flag this as a "Forceful Delay Pattern".
-
-IMPORTANT: Use markdown table syntax. Be highly analytical. 
-- Use EXACTLY these tags to start sections: [PART_EMPLOYEE], [PART_ZONE], [PART_BREACH], [PART_PRIORITY], [PART_RED_FLAGS].
-- DO NOT BOLD the tags.
-- SEARCH FOR HUMAN NAMES: Look inside 'FULL DATA' and 'Remarks' to find actual names of citizens or officers. 
-- MULTILINGUAL SUPPORT: Remarks may contain a mixture of languages. Interpret them and provide final summary in English.
-- STOP USING GENERIC IDs: Never use 'User_170' or 'APPLICANT' as a name if a real human name is present.
-- CLARIFY 'APPLICANT' STATUS: If with 'APPLICANT', use actual citizen name and note 'Citizen Action Pending'.
-- Keep tables concise (max 5-7 rows each). Wrap each table in its respective header.
-
-Format:
-[PART_EMPLOYEE]
-[table]
-
-[PART_ZONE]
-[table]
-
-[PART_BREACH]
-[table]
-
-[PART_PRIORITY]
-[table]
-
-[PART_RED_FLAGS]
-[table] (Columns: Entity, Red Flag Type, Evidence, AI Verdict on Intent)
-`;
+        const prompt = createTabularInsightsPrompt({
+            topPerformers: topPerformersStr,
+            behavioralRedFlags: behaviorStr,
+            zonePerformance: zonePerfStr,
+            riskApplications: riskAppsStr
+        });
 
         const response = await this.ollamaService.generate(prompt);
         const content = response.content;
@@ -241,25 +177,14 @@ Format:
             .map(p => p.name)
             .join(', ');
 
-        const prompt = `You are an SLA workflow optimization expert. Suggest 3 specific, actionable recommendations:
-
-Current Data Points:
-- Anomaly Count: ${statistics.anomalyCount}
-- Average Time: ${statistics.avgDaysRested.toFixed(1)} days
-- Critical Bottleneck: ${statistics.criticalBottleneck?.role || 'None'} (${statistics.criticalBottleneck?.avgDelay?.toFixed(1) || 0} days avg)
-- Top Performers: ${performersStr}
-- Primary Zones: ${statistics.zonePerformance.slice(0, 2).map(z => z.name).join(', ')}
-
-Task: Provide 3 concrete recommendations. 
-IMPORTANT:
-- Max 10 words per recommendation.
-- Use action verbs.
-- Mention specific roles/zones.
-
-Format:
-1. [Recommendation]
-2. [Recommendation]
-3. [Recommendation]`;
+        const prompt = createRecommendationsPrompt({
+            anomalyCount: statistics.anomalyCount,
+            avgProcessingTime: statistics.avgDaysRested.toFixed(1),
+            bottleneckRole: statistics.criticalBottleneck?.role || 'None',
+            bottleneckAvgDelay: statistics.criticalBottleneck?.avgDelay?.toFixed(1) || '0',
+            topPerformers: performersStr,
+            primaryZones: statistics.zonePerformance.slice(0, 2).map(z => z.name).join(', ')
+        });
 
         const response = await this.ollamaService.generate(prompt);
 

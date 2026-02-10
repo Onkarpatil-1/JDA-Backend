@@ -1,29 +1,36 @@
-import type { MetricData, TimeSeriesData } from '../types/index.js';
+import type { MetricData } from '../types/index.js';
+
+/**
+ * Context for anomaly detection prompt
+ */
+export interface AnomalyDetectionContext {
+  metricName: string;
+  currentValue: number;
+  timestamp: string;
+  historicalMean: string;
+  historicalStdDev: string;
+  calculatedZScore: string;
+  sampleSize: number;
+  recentValues: string;
+}
 
 /**
  * Generate prompt for anomaly detection
  */
-export function createAnomalyDetectionPrompt(
-    current: MetricData,
-    historical: TimeSeriesData
-): string {
-    const mean = calculateMean(historical.values);
-    const stdDev = calculateStdDev(historical.values, mean);
-    const zScore = (current.value - mean) / stdDev;
-
-    return `You are an expert SLA monitoring system analyzing metrics for anomalies.
+export const createAnomalyDetectionPrompt = (context: AnomalyDetectionContext): string => {
+  return `You are an expert SLA monitoring system analyzing metrics for anomalies.
 
 **Current Metric Data:**
-- Metric Name: ${current.metricName}
-- Current Value: ${current.value}
-- Timestamp: ${current.timestamp}
+- Metric Name: ${context.metricName}
+- Current Value: ${context.currentValue}
+- Timestamp: ${context.timestamp}
 
 **Historical Context:**
-- Historical Mean: ${mean.toFixed(2)}
-- Standard Deviation: ${stdDev.toFixed(2)}
-- Calculated Z-Score: ${zScore.toFixed(2)}
-- Sample Size: ${historical.values.length} data points
-- Recent Values: [${historical.values.slice(-10).join(', ')}]
+- Historical Mean: ${context.historicalMean}
+- Standard Deviation: ${context.historicalStdDev}
+- Calculated Z-Score: ${context.calculatedZScore}
+- Sample Size: ${context.sampleSize} data points
+- Recent Values: [${context.recentValues}]
 
 **Task:**
 Analyze if the current value is anomalous based on:
@@ -39,10 +46,10 @@ Analyze if the current value is anomalous based on:
   "explanation": "Brief explanation of why this is/isn't anomalous",
   "confidence": number (0-1),
   "metadata": {
-    "zScore": ${zScore.toFixed(2)},
+    "zScore": ${context.calculatedZScore},
     "threshold": 2,
-    "historicalMean": ${mean.toFixed(2)},
-    "historicalStdDev": ${stdDev.toFixed(2)}
+    "historicalMean": ${context.historicalMean},
+    "historicalStdDev": ${context.historicalStdDev}
   }
 }
 
@@ -52,19 +59,9 @@ Analyze if the current value is anomalous based on:
 - CRITICAL: Z-score >= 3, immediate attention required
 
 Respond ONLY with valid JSON, no additional text.`;
-}
+};
 
 /**
  * System prompt for anomaly detection
  */
 export const ANOMALY_DETECTION_SYSTEM_PROMPT = `You are a specialized AI system for SLA monitoring and anomaly detection. You analyze metrics using statistical methods and provide actionable insights. Always respond in valid JSON format. Be precise with numerical calculations and conservative with severity classifications.`;
-
-// Helper functions
-function calculateMean(values: number[]): number {
-    return values.reduce((sum, val) => sum + val, 0) / values.length;
-}
-
-function calculateStdDev(values: number[], mean: number): number {
-    const variance = values.reduce((sum, val) => sum + Math.pow(val - mean, 2), 0) / values.length;
-    return Math.sqrt(variance);
-}
