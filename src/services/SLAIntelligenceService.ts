@@ -2,11 +2,15 @@ import { OllamaService } from './OllamaService.js';
 import { ProjectService } from './ProjectService.js';
 import {
     createAnomalyDetectionPrompt,
+    createPredictionPrompt,
+    createAlertPrompt
+} from '../config/promptBuilders.js';
+import {
     ANOMALY_DETECTION_SYSTEM_PROMPT,
-} from '../prompts/anomalyDetection.js';
-import { createPredictionPrompt, PREDICTION_SYSTEM_PROMPT } from '../prompts/prediction.js';
-import { createAlertPrompt, ALERT_SYSTEM_PROMPT } from '../prompts/alerts.js';
-import { CHATBOT_SYSTEM_PROMPT } from '../prompts/chatbot.js';
+    PREDICTION_SYSTEM_PROMPT,
+    ALERT_SYSTEM_PROMPT,
+    CHATBOT_SYSTEM_PROMPT
+} from '../prompts/templates.js';
 import {
     calculateMean,
     calculateStdDev,

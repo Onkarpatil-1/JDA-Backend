@@ -5,7 +5,7 @@ import {
     createBottleneckPredictionPrompt,
     createTabularInsightsPrompt,
     createRecommendationsPrompt
-} from '../prompts/analysis.js';
+} from '../config/promptBuilders.js';
 
 /**
  * AI-powered analysis service using LLM for intelligent insights
