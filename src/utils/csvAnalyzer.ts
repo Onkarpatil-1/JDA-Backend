@@ -1,4 +1,92 @@
-import type { WorkflowStep, ProjectStatistics } from '../types/index.js';
+import type { WorkflowStep, ProjectStatistics, JDAIntelligence, JDADepartment, JDAParentService, JDAService } from '../types/index.js';
+
+/**
+ * 7-Point Delay Categorization Framework (Rule-Based)
+ */
+export function ruleBasedDelayClassification(remark: string): string {
+    const r = remark.toLowerCase();
+
+    if (r.includes('missing') || r.includes('incomplete') || r.includes('incorrect') || r.includes('invalid') || r.includes('document')) return 'Documentation Issues';
+    if (r.includes('understand') || r.includes('unclear') || r.includes('language') || r.includes('response')) return 'Communication Gaps';
+    if (r.includes('approval') || r.includes('coordination') || r.includes('inspection') || r.includes('verification') || r.includes('technical review')) return 'Process Bottlenecks';
+    if (r.includes('late') || r.includes('non-compliance') || r.includes('payment') || r.includes('unavailable')) return 'Applicant-Side Issues';
+    if (r.includes('delayed processing') || r.includes('workload') || r.includes('system') || r.includes('server') || r.includes('down')) return 'Employee/System-Side Issues';
+    if (r.includes('third-party') || r.includes('clearance') || r.includes('utility') || r.includes('audit')) return 'External Dependencies';
+    if (r.includes('complex') || r.includes('dispute') || r.includes('legal') || r.includes('policy')) return 'Complexity/Special Cases';
+
+    return 'Uncategorized'; // To be handled by LLM if needed
+}
+
+/**
+ * Build Hierarchical JDA Data Structure
+ */
+export function buildJDAHierarchy(steps: WorkflowStep[]): JDAIntelligence {
+    const departmentsMap = new Map<string, Map<string, Map<string, WorkflowStep[]>>>();
+
+    // 1. Group by Dept -> Parent Service -> Service
+    steps.forEach(step => {
+        const deptName = step.departmentName || 'General';
+        const parentService = step.parentServiceName || 'General';
+        const service = step.serviceName || 'General';
+
+        if (!departmentsMap.has(deptName)) {
+            departmentsMap.set(deptName, new Map());
+        }
+        const parentMap = departmentsMap.get(deptName)!;
+
+        if (!parentMap.has(parentService)) {
+            parentMap.set(parentService, new Map());
+        }
+        const serviceMap = parentMap.get(parentService)!;
+
+        if (!serviceMap.has(service)) {
+            serviceMap.set(service, []);
+        }
+        serviceMap.get(service)!.push(step);
+    });
+
+    // 2. Build Output Structure
+    const departments: JDADepartment[] = [];
+
+    departmentsMap.forEach((parentMap, deptName) => {
+        const parentServices: JDAParentService[] = [];
+
+        parentMap.forEach((serviceMap, parentServiceName) => {
+            const services: JDAService[] = [];
+
+            serviceMap.forEach((tickets, serviceName) => {
+                // Determine insight for this service level
+                const avgDays = tickets.reduce((sum, t) => sum + t.totalDaysRested, 0) / tickets.length;
+                const serviceInsight = `Avg Processing: ${avgDays.toFixed(1)} days. Total Tickets: ${tickets.length}`;
+
+                services.push({
+                    name: serviceName,
+                    serviceLevelInsight: serviceInsight,
+                    tickets: tickets.map(t => ({
+                        ticketId: t.ticketId,
+                        stepOwnerRole: t.post,
+                        remarkOriginal: t.lifetimeRemarksFrom || 'No remarks',
+                        remarkEnglishSummary: t.lifetimeRemarksFrom || 'No remarks', // Default to original, LLM will overwrite
+                        detectedCategory: ruleBasedDelayClassification(t.lifetimeRemarksFrom || ''),
+                        daysRested: t.totalDaysRested
+                    }))
+                });
+            });
+
+            parentServices.push({
+                name: parentServiceName,
+                services
+            });
+        });
+
+        departments.push({
+            name: deptName,
+            parentServices
+        });
+    });
+
+    return { departments };
+}
 
 /**
  * Calculate mean of an array of numbers
@@ -55,12 +143,19 @@ export function analyzeWorkflowData(workflowSteps: WorkflowStep[]): ProjectStati
     const anomalyCount = anomalies.length;
 
     // Find critical bottleneck (role with highest average delay)
+    const excludedRoles = ['APPLICANT', 'CITIZEN', 'SYSTEM', 'UNKNOWN'];
+
     const roleDelays = new Map<string, number[]>();
     workflowSteps.forEach(step => {
-        if (!roleDelays.has(step.post)) {
+        // Normalize role for check
+        const role = step.post.toUpperCase().trim();
+        if (!roleDelays.has(step.post) && !excludedRoles.includes(role)) {
             roleDelays.set(step.post, []);
         }
-        roleDelays.get(step.post)!.push(step.totalDaysRested);
+
+        if (roleDelays.has(step.post)) {
+            roleDelays.get(step.post)!.push(step.totalDaysRested);
+        }
     });
 
     let criticalBottleneck: ProjectStatistics['criticalBottleneck'] | undefined;
@@ -84,8 +179,17 @@ export function analyzeWorkflowData(workflowSteps: WorkflowStep[]): ProjectStati
     // Find top performers (employees with best avg time and high task count)
     const employeePerformance = new Map<string, { tasks: number; totalTime: number; role: string }>();
 
+    const excludedEmployees = ['APPLICANT', 'CITIZEN', 'SYSTEM', 'UNKNOWN', 'Admin', 'Administrator'];
+
     workflowSteps.forEach(step => {
         const employeeName = step.lifetimeRemarksFrom || 'Unknown';
+        const normalizedName = employeeName.toUpperCase().trim();
+
+        // Skip if employee matches exclusion list
+        if (excludedEmployees.some(ex => normalizedName.includes(ex.toUpperCase()))) {
+            return;
+        }
+
         if (!employeePerformance.has(employeeName)) {
             employeePerformance.set(employeeName, { tasks: 0, totalTime: 0, role: step.post });
         }
@@ -250,7 +354,8 @@ export function analyzeWorkflowData(workflowSteps: WorkflowStep[]): ProjectStati
         behaviorMetrics: {
             employeeRemarks,
             redFlags: redFlags.slice(0, 10)
-        }
+        },
+        jdaHierarchy: buildJDAHierarchy(workflowSteps)
     };
 }
 
@@ -261,8 +366,10 @@ export function parseWorkflowStep(row: any): WorkflowStep {
     return {
         ticketId: row['Ticket ID'] || row.TicketID || row.ticketId || '',
         serviceName: row['Service Name'] || row.ServiceName || row.serviceName || '',
+        parentServiceName: row['Parent Service Name'] || row.ParentServiceName || row.parentServiceName || 'General Service',
+        departmentName: row['Department Name'] || row.DepartmentName || row.departmentName || row.OwnerDepartmentId || 'General Department',
         post: row.Post || row.post || '',
-        zoneId: row.ZoneID || row.zoneId || '',
+        zoneId: row.ZoneID || row.zoneId || (row.DepartmentName?.match(/(?:Zone|ZONE)\s*[-:]?\s*(\d+)/i)?.[1]) || (row.Post?.match(/(?:Zone|ZONE)\s*[-:]?\s*(\d+)/i)?.[1]) || 'General',
         applicationDate: row['Application Date'] || row.ApplicationDate || row.applicationDate || '',
         deliveredOn: row.DeliverdOn || row.deliveredOn || '',
         totalDaysRested: parseFloat(row.TotalDaysRested || row.totalDaysRested || 0),

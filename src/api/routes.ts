@@ -3,6 +3,7 @@ import multer from 'multer';
 import { SLAIntelligenceService } from '../services/SLAIntelligenceService.js';
 import { OllamaService } from '../services/OllamaService.js';
 import { ProjectService } from '../services/ProjectService.js';
+import type { AIProvider } from '../services/AIFactory.js';
 
 // Configure multer for file uploads (memory storage)
 const upload = multer({ storage: multer.memoryStorage() });
@@ -163,9 +164,11 @@ export function createRouter(
             }
 
             const projectName = req.body.name || `Project ${new Date().toLocaleDateString()}`;
+            const aiProvider = (req.body.aiProvider as AIProvider) || 'ollama';
+            const apiKey = req.body.apiKey; // Optional API key
             const csvContent = req.file.buffer.toString('utf-8');
 
-            const projectData = await projectService.createProject(csvContent, projectName);
+            const projectData = await projectService.createProject(csvContent, projectName, aiProvider, apiKey);
 
             res.json({
                 success: true,

@@ -81,6 +81,8 @@ export interface WorkflowStep {
     lifetimeRemarksFrom?: string;
     numberOfEntries?: number;
     applicantName?: string;
+    departmentName?: string;
+    parentServiceName?: string;
     rawRow?: Record<string, any>;
 }
 
@@ -164,6 +166,37 @@ export interface ProjectStatistics {
         }>;
     };
     aiInsights?: AIInsights; // AI-powered analysis results
+    jdaHierarchy?: JDAIntelligence; // Rule-based hierarchy
+}
+
+// JDA Intelligence Hierarchy Types
+export interface JDATicket {
+    ticketId: string;
+    stepOwnerRole: string; // Post
+    remarkOriginal: string; // LifeTimeRemarksFrom
+    remarkEnglishSummary: string;
+    detectedCategory: string; // 7 categories
+    daysRested: number;
+}
+
+export interface JDAService {
+    name: string;
+    serviceLevelInsight: string;
+    tickets: JDATicket[];
+}
+
+export interface JDAParentService {
+    name: string;
+    services: JDAService[];
+}
+
+export interface JDADepartment {
+    name: string;
+    parentServices: JDAParentService[];
+}
+
+export interface JDAIntelligence {
+    departments: JDADepartment[];
 }
 
 // AI-Powered Insights
@@ -180,4 +213,20 @@ export interface AIInsights {
     breachRiskTable?: string;
     highPriorityTable?: string;
     behavioralRedFlagsTable?: string;
+    remarkAnalysis?: {
+        processGaps: string[];
+        painPoints: string[];
+        forcefulDelays: Array<{
+            ticketId: string;
+            employeeName: string;
+            reason: string;
+            confidence: number;
+            category: string;
+            recommendation: string;
+        }>;
+        sentimentSummary: string;
+        primaryDelayCategory?: string;
+    };
+    // New JDA Intelligence Structure
+    jdaIntelligence?: JDAIntelligence;
 }

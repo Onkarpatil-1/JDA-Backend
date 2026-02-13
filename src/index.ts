@@ -29,7 +29,7 @@ async function startServer() {
         model: OLLAMA_MODEL,
     });
 
-    const aiAnalysisService = new AIAnalysisService(ollamaService);
+    const aiAnalysisService = new AIAnalysisService();
     const projectService = new ProjectService(aiAnalysisService);
     const slaService = new SLAIntelligenceService(ollamaService, projectService);
 

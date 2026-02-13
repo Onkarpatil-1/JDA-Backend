@@ -12,7 +12,9 @@ import {
     RECOMMENDATIONS_USER_PROMPT,
     PREDICTION_USER_PROMPT,
     ANOMALY_DETECTION_USER_PROMPT,
-    ALERT_USER_PROMPT
+    ALERT_USER_PROMPT,
+    REMARK_ANALYSIS_USER_PROMPT,
+    JDA_ANALYSIS_USER_PROMPT
 } from '../prompts/templates.js';
 
 import type {
@@ -21,7 +23,9 @@ import type {
     TabularInsightsContext,
     RecommendationsContext,
     PredictionContext,
-    AnomalyDetectionContext
+    AnomalyDetectionContext,
+    RemarkAnalysisContext,
+    JDAAnalysisContext
 } from '../types/ai.js';
 
 import type { AlertRequest } from '../types/index.js';
@@ -93,3 +97,11 @@ export function createAlertPrompt(request: AlertRequest): string {
         alertMaxLength: AI_CONFIG.ALERT_MAX_LENGTH
     });
 }
+
+export const createRemarkAnalysisPrompt = (context: RemarkAnalysisContext): string => {
+    return interpolate(REMARK_ANALYSIS_USER_PROMPT, context);
+};
+
+export const createJDAAnalysisPrompt = (context: JDAAnalysisContext): string => {
+    return interpolate(JDA_ANALYSIS_USER_PROMPT, context);
+};

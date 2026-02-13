@@ -1,10 +1,11 @@
 import { Ollama } from 'ollama';
 import type { OllamaConfig, LLMResponse } from '../types/index.js';
+import type { AIService } from '../interfaces/AIService.js';
 
 /**
  * Service class for interacting with Ollama LLM
  */
-export class OllamaService {
+export class OllamaService implements AIService {
     private ollama: Ollama;
     private model: string;
     private defaultTemperature: number;

@@ -11,6 +11,9 @@ import type { AlertRequest } from './index.js';
 
 /** Context for anomaly analysis prompt */
 export interface AnomalyAnalysisContext {
+    projectName: string;
+    totalTickets: number;
+    totalWorkflowSteps: number;
     anomalyCount: number;
     avgProcessingTime: string;
     maxProcessingTime: number;
@@ -74,4 +77,21 @@ export interface AnomalyDetectionContext {
     calculatedZScore: string;
     sampleSize: number;
     recentValues: string;
+}
+
+/** Context for remark analysis prompt */
+export interface RemarkAnalysisContext {
+    ticketId: string;
+    flowType: string; // 'Standard' or 'High Delay'
+    conversationHistory: string;
+    totalDelay: number;
+    employeeName: string;
+    stage: string;
+}
+
+/** Context for JDA specific remark analysis prompt */
+export interface JDAAnalysisContext {
+    serviceName: string;
+    role: string;
+    remarks: string;
 }

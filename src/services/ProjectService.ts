@@ -1,5 +1,6 @@
 import Papa from 'papaparse';
 import type { ProjectData, ProjectMetadata, WorkflowStep } from '../types/index.js';
+import type { AIProvider } from './AIFactory.js';
 import { analyzeWorkflowData, parseWorkflowStep } from '../utils/csvAnalyzer.js';
 import { AIAnalysisService } from './AIAnalysisService.js';
 
@@ -17,7 +18,7 @@ export class ProjectService {
     /**
      * Create a new project from CSV data
      */
-    async createProject(csvContent: string, projectName: string): Promise<ProjectData> {
+    async createProject(csvContent: string, projectName: string, provider: AIProvider = 'ollama', apiKey?: string): Promise<ProjectData> {
         // Validate file size (warn if > 50MB worth of data)
         const sizeInMB = new Blob([csvContent]).size / (1024 * 1024);
         if (sizeInMB > 100) {
@@ -47,7 +48,9 @@ export class ProjectService {
                                 console.log('🤖 Running AI analysis...');
                                 const aiInsights = await this.aiAnalysisService.analyzeProjectData(
                                     statistics,
-                                    projectName
+                                    projectName,
+                                    provider,
+                                    apiKey
                                 );
                                 statistics.aiInsights = aiInsights;
                                 console.log('✅ AI analysis complete');
