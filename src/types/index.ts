@@ -81,6 +81,7 @@ export interface WorkflowStep {
     lifetimeRemarksFrom?: string;
     numberOfEntries?: number;
     applicantName?: string;
+    employeeName?: string; // New: Actual Name
     departmentName?: string;
     parentServiceName?: string;
     rawRow?: Record<string, any>;
@@ -164,6 +165,7 @@ export interface ProjectStatistics {
             evidence: string;
             severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
         }>;
+        globalTopics: Array<{ topic: string; count: number; sentiment: 'negative' | 'neutral' }>; // New field
     };
     aiInsights?: AIInsights; // AI-powered analysis results
     jdaHierarchy?: JDAIntelligence; // Rule-based hierarchy
@@ -172,9 +174,12 @@ export interface ProjectStatistics {
 // JDA Intelligence Hierarchy Types
 export interface JDATicket {
     ticketId: string;
+    stepOwnerName: string; // New: Actual Name
     stepOwnerRole: string; // Post
     remarkOriginal: string; // LifeTimeRemarksFrom
     remarkEnglishSummary: string;
+    employeeAnalysis?: string; // New: AI analysis of employee actions
+    applicantAnalysis?: string; // New: AI analysis of applicant perspective
     detectedCategory: string; // 7 categories
     daysRested: number;
 }
@@ -199,6 +204,69 @@ export interface JDAIntelligence {
     departments: JDADepartment[];
 }
 
+export interface ForensicAnalysis {
+    overallRemarkAnalysis?: {
+        employeeRemarksOverall: {
+            totalEmployeeRemarks: number;
+            summary: string;
+            commonThemes: string[];
+            communicationQuality: string;
+            responseTimeliness: string;
+            inactionPatterns: string[];
+            topEmployeeActions: string[];
+        };
+        applicantRemarksOverall: {
+            totalApplicantRemarks: number;
+            summary: string;
+            commonThemes: string[];
+            complianceLevel: string;
+            sentimentTrend: string;
+            delayPatterns: string[];
+            topApplicantConcerns: string[];
+        };
+    };
+    employeeRemarkAnalysis: {
+        summary: string;
+        totalEmployeeRemarks: number;
+        keyActions: string[];
+        responseTimeliness: string;
+        communicationClarity: string;
+        inactionFlags: Array<{
+            observation: string;
+            evidence: string;
+        }>;
+    };
+    applicantRemarkAnalysis: {
+        summary: string;
+        totalApplicantRemarks: number;
+        keyActions: string[];
+        responseTimeliness: string;
+        sentimentTrend: string;
+        complianceLevel: string;
+    };
+    delayAnalysis: {
+        primaryDelayCategory: string;
+        primaryCategoryConfidence: number;
+        categorySummary: string;
+        allApplicableCategories: Array<{
+            category: string;
+            confidence: number;
+            reasoning: string;
+        }>;
+        processGaps: string[];
+        painPoints: string[];
+        forcefulDelays: Array<{
+            reason: string;
+            confidence: number;
+            category: string;
+            evidence: string;
+            recommendation: string;
+        }>;
+    };
+    sentimentSummary: string;
+    ticketInsightSummary: string;
+}
+
 // AI-Powered Insights
 export interface AIInsights {
     anomalyPatterns: string;
@@ -213,20 +281,9 @@ export interface AIInsights {
     breachRiskTable?: string;
     highPriorityTable?: string;
     behavioralRedFlagsTable?: string;
-    remarkAnalysis?: {
-        processGaps: string[];
-        painPoints: string[];
-        forcefulDelays: Array<{
-            ticketId: string;
-            employeeName: string;
-            reason: string;
-            confidence: number;
-            category: string;
-            recommendation: string;
-        }>;
-        sentimentSummary: string;
-        primaryDelayCategory?: string;
-    };
+    remarkAnalysis?: ForensicAnalysis;
+    // Per-ticket forensic analysis map (NEW)
+    forensicReports?: Record<string, ForensicAnalysis>;
     // New JDA Intelligence Structure
     jdaIntelligence?: JDAIntelligence;
 }

@@ -46,18 +46,32 @@ export class ProjectService {
                         if (this.aiAnalysisService) {
                             try {
                                 console.log('🤖 Running AI analysis...');
+                                console.log(`   Provider: ${provider}`);
+                                console.log(`   Total tickets: ${statistics.totalTickets}`);
+                                console.log(`   Workflow steps: ${workflowSteps.length}`);
+
                                 const aiInsights = await this.aiAnalysisService.analyzeProjectData(
                                     statistics,
                                     projectName,
                                     provider,
-                                    apiKey
+                                    apiKey,
+                                    workflowSteps // Pass full history for forensic analysis
                                 );
-                                statistics.aiInsights = aiInsights;
+
                                 console.log('✅ AI analysis complete');
+                                console.log(`   Has remarkAnalysis: ${!!aiInsights?.remarkAnalysis}`);
+                                console.log(`   Has forensicReports: ${!!aiInsights?.forensicReports}`);
+                                console.log(`   Forensic reports keys: ${aiInsights?.forensicReports ? Object.keys(aiInsights.forensicReports).join(', ') : 'none'}`);
+
+                                statistics.aiInsights = aiInsights;
                             } catch (aiError) {
-                                console.warn('⚠️  AI analysis failed, continuing without AI insights:', aiError);
+                                console.error('❌ AI analysis failed with error:');
+                                console.error(aiError);
+                                console.error('Stack trace:', (aiError as Error).stack);
                                 // Continue without AI insights rather than failing the entire upload
                             }
+                        } else {
+                            console.warn('⚠️  No AI analysis service available');
                         }
 
                         // Create project metadata

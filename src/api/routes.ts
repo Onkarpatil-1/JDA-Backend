@@ -5,6 +5,8 @@ import { OllamaService } from '../services/OllamaService.js';
 import { ProjectService } from '../services/ProjectService.js';
 import type { AIProvider } from '../services/AIFactory.js';
 
+import { ProgressService } from '../services/ProgressService.js';
+
 // Configure multer for file uploads (memory storage)
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -14,6 +16,20 @@ export function createRouter(
     projectService: ProjectService
 ) {
     const router = Router();
+    const progressService = ProgressService.getInstance();
+
+    /**
+     * SSE Progress Endpoint
+     * GET /api/v1/progress
+     */
+    router.get('/progress', (req: Request, res: Response) => {
+        // SSE Headers
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+
+        progressService.addClient(res);
+    });
 
     /**
      * Health check endpoint
@@ -154,6 +170,33 @@ export function createRouter(
     });
 
     /**
+     * Text Analytics Playground Endpoint
+     * POST /api/v1/analyze/playground
+     */
+    router.post('/analyze/playground', async (req: Request, res: Response) => {
+        try {
+            const { text } = req.body;
+            if (!text) {
+                return res.status(400).json({ error: 'Missing text content' });
+            }
+
+            const result = await slaService.analyzeText(text);
+
+            if (!result) {
+                return res.status(500).json({ error: 'Failed to generate analysis' });
+            }
+
+            res.json(result);
+        } catch (error) {
+            console.error('Playground analysis error:', error);
+            res.status(500).json({
+                error: 'Failed to analyze text',
+                details: String(error),
+            });
+        }
+    });
+
+    /**
      * Upload CSV and create project
      * POST /api/v1/project/upload
      */
@@ -173,6 +216,7 @@ export function createRouter(
             res.json({
                 success: true,
                 project: projectData.metadata,
+                statistics: projectData.statistics, // Include AI insights and stats immediately
                 message: `Project "${projectName}" created successfully`
             });
         } catch (error) {

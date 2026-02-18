@@ -5,6 +5,7 @@ import { OllamaService } from './services/OllamaService.js';
 import { SLAIntelligenceService } from './services/SLAIntelligenceService.js';
 import { ProjectService } from './services/ProjectService.js';
 import { AIAnalysisService } from './services/AIAnalysisService.js';
+import { ProgressService } from './services/ProgressService.js';
 import { createRouter } from './api/routes.js';
 
 // Load environment variables
@@ -30,6 +31,11 @@ async function startServer() {
     });
 
     const aiAnalysisService = new AIAnalysisService();
+
+    // Inject ProgressService
+    const progressService = ProgressService.getInstance();
+    aiAnalysisService.setProgressService(progressService);
+
     const projectService = new ProjectService(aiAnalysisService);
     const slaService = new SLAIntelligenceService(ollamaService, projectService);
 

@@ -64,7 +64,8 @@ export function buildJDAHierarchy(steps: WorkflowStep[]): JDAIntelligence {
                     serviceLevelInsight: serviceInsight,
                     tickets: tickets.map(t => ({
                         ticketId: t.ticketId,
-                        stepOwnerRole: t.post,
+                        stepOwnerName: t.employeeName || 'Unknown', // Map Name
+                        stepOwnerRole: t.post, // Map Role (Designation)
                         remarkOriginal: t.lifetimeRemarksFrom || 'No remarks',
                         remarkEnglishSummary: t.lifetimeRemarksFrom || 'No remarks', // Default to original, LLM will overwrite
                         detectedCategory: ruleBasedDelayClassification(t.lifetimeRemarksFrom || ''),
@@ -131,9 +132,18 @@ export function analyzeWorkflowData(workflowSteps: WorkflowStep[]): ProjectStati
     const minDaysRested = Math.min(...daysRested);
     const stdDaysRested = parseFloat(standardDeviation(daysRested).toFixed(2));
 
-    // Count completed tickets (those with DeliveredOn date)
-    const completedTickets = workflowSteps.filter(step => step.deliveredOn && step.deliveredOn !== '').length;
-    const completionRate = parseFloat(((completedTickets / totalWorkflowSteps) * 100).toFixed(1));
+    // Count completed tickets (unique tickets that have a DeliveredOn date in ANY of their steps)
+    const completedTicketIds = new Set(
+        workflowSteps
+            .filter(step => step.deliveredOn && step.deliveredOn !== '' && step.deliveredOn !== 'NULL')
+            .map(step => step.ticketId)
+    );
+    const completedTickets = completedTicketIds.size;
+
+    // Completion rate based on unique tickets
+    const completionRate = totalTickets > 0
+        ? parseFloat(((completedTickets / totalTickets) * 100).toFixed(1))
+        : 0;
 
     // Identify anomalies (z-score > 3)
     const anomalies = workflowSteps.filter(step => {
@@ -209,29 +219,40 @@ export function analyzeWorkflowData(workflowSteps: WorkflowStep[]): ProjectStati
         .sort((a, b) => a.avgTime - b.avgTime)
         .slice(0, 5);
 
-    // Identify high-risk applications (high z-score delays)
+    // Identify high-risk applications (concerning delays)
     const riskApplications = workflowSteps
         .map(step => {
             const z = zScore(step.totalDaysRested, avgDaysRested, stdDaysRested);
+            const role = (step.lifetimeRemarksFrom || '').toUpperCase();
+            const isApplicant = role.includes('APPLICANT') || role.includes('CITIZEN');
+
             return {
                 id: step.ticketId,
                 service: step.serviceName,
                 zone: step.zoneId,
                 role: step.post,
                 dueDate: step.applicationDate,
-                risk: Math.min(100, Math.max(0, Math.round((Math.abs(z) / 20) * 100))),
+                // Bias risk score slightly if it's an applicant remark to ensure inclusion in qualitative analysis
+                risk: Math.min(100, Math.max(0, Math.round((Math.abs(z) / 10) * 100) + (isApplicant ? 20 : 0))),
                 category: Math.abs(z) > 10 ? 'Critical' : Math.abs(z) > 5 ? 'High' : 'Medium',
                 delay: step.totalDaysRested,
                 zScore: parseFloat(z.toFixed(2)),
                 remarks: step.lifetimeRemarks,
                 lastActionBy: step.lifetimeRemarksFrom,
                 applicantName: (step as any).applicantName || undefined,
-                rawRow: (step as any).rawRow || undefined
+                rawRow: (step as any).rawRow || undefined,
+                isApplicantAction: isApplicant
             };
         })
-        .filter(app => Math.abs(app.zScore) > 3)
-        .sort((a, b) => b.zScore - a.zScore)
-        .slice(0, 10);
+        // Relax threshold from 3 to 1.5 to capture more context for AI
+        .filter(app => Math.abs(app.zScore) > 1.5 || app.isApplicantAction)
+        .sort((a, b) => {
+            // Priority: Critical z-score first, then applicant remarks to ensure qualitative variety
+            if (a.isApplicantAction && !b.isApplicantAction) return -1;
+            if (!a.isApplicantAction && b.isApplicantAction) return 1;
+            return b.zScore - a.zScore;
+        })
+        .slice(0, 15); // Increased from 10 to 15 to give AI more variety
 
     // Calculate zone performance
     const zonePerformance = new Map<string, { totalSteps: number; completedSteps: number; totalTime: number }>();
@@ -336,6 +357,30 @@ export function analyzeWorkflowData(workflowSteps: WorkflowStep[]): ProjectStati
         };
     });
 
+    // Global Topic Extraction (Simple Keyword Frequency on ALL tickets)
+    const topicMap = new Map<string, number>();
+    const stopWords = new Set(['the', 'and', 'is', 'to', 'in', 'of', 'for', 'with', 'on', 'at', 'by', 'from', 'a', 'an', 'this', 'that', 'it', 'as', 'be', 'are', 'was', 'were', 'has', 'have', 'had', 'been', 'will', 'shall', 'may', 'can', 'should', 'would', 'could', 'not', 'no', 'yes', 'ok', 'okay', 'done', 'remarks', 'remark', 'issue', 'issues', 'case', 'file', 'application']);
+
+    workflowSteps.forEach(step => {
+        const text = (step.lifetimeRemarks || '' + ' ' + (step.lifetimeRemarksFrom || '')).toLowerCase();
+        // Simple tokenization
+        const words = text.split(/[\s,.;:()\/]+/);
+        words.forEach(w => {
+            if (w.length > 3 && !stopWords.has(w) && !/^\d+$/.test(w)) {
+                topicMap.set(w, (topicMap.get(w) || 0) + 1);
+            }
+        });
+    });
+
+    const globalTopics = Array.from(topicMap.entries())
+        .map(([topic, count]) => ({
+            topic: topic.charAt(0).toUpperCase() + topic.slice(1),
+            count,
+            sentiment: 'neutral' as 'neutral' // Placeholder, could use simple sentiment dictionary later
+        }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 15);
+
     return {
         totalWorkflowSteps,
         totalTickets,
@@ -353,7 +398,8 @@ export function analyzeWorkflowData(workflowSteps: WorkflowStep[]): ProjectStati
         deptPerformance: deptData,
         behaviorMetrics: {
             employeeRemarks,
-            redFlags: redFlags.slice(0, 10)
+            redFlags: redFlags.slice(0, 10),
+            globalTopics // Add to output
         },
         jdaHierarchy: buildJDAHierarchy(workflowSteps)
     };
@@ -378,6 +424,8 @@ export function parseWorkflowStep(row: any): WorkflowStep {
         numberOfEntries: parseInt(row.NumberOfEntries || row.numberOfEntries || 0),
         // Capture applicant name if available in common columns
         applicantName: row.ApplicantName || row['Applicant Name'] || row.CustomerName || row['Customer Name'] || row.citizen_name || undefined,
+        // Capture Employee Name from CSV
+        employeeName: row['Employee Name'] || row.EmployeeName || row.employeeName || undefined,
         // Preserve all fields for AI diagnostic depth
         rawRow: row
     } as WorkflowStep;

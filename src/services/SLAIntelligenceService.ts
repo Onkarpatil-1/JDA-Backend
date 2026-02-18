@@ -1,4 +1,5 @@
 import { OllamaService } from './OllamaService.js';
+import { AIAnalysisService } from './AIAnalysisService.js';
 import { ProjectService } from './ProjectService.js';
 import {
     createAnomalyDetectionPrompt,
@@ -24,6 +25,7 @@ import type {
     PredictionResult,
     AlertRequest,
     AlertResponse,
+    ForensicAnalysis
 } from '../types/index.js';
 
 /**
@@ -202,16 +204,44 @@ export class SLAIntelligenceService {
 - Medium Risk Applications: ${mediumRiskApps.length}
 - Low Risk Applications: ${lowRiskApps.length}`;
 
-                // Add top high-risk applications details (limit to 5 for context window)
+                // Add top high-risk applications details (limit to 15 for better coverage)
                 if (highRiskApps.length > 0) {
-                    systemPrompt += `\n\nTop High-Risk Applications:`;
-                    highRiskApps.slice(0, 5).forEach((app, idx) => {
+                    systemPrompt += `\n\nDetailed High-Risk Applications (Top 15):`;
+                    highRiskApps.slice(0, 15).forEach((app, idx) => {
                         systemPrompt += `\n${idx + 1}. Ticket ${app.id} - ${app.service} (${app.zone})
    - Assigned to: ${app.role}
-   - Due: ${app.dueDate}
-   - Risk Score: ${app.risk.toFixed(2)}
+   - Status: ${app.category} Risk
    - Current Delay: ${app.delay} days
-   - Z-Score: ${app.zScore.toFixed(2)}`;
+   - Last Action By: ${app.lastActionBy || 'Unknown'}
+   - Remark: ${app.remarks?.substring(0, 100) || 'None'}`;
+                    });
+                }
+
+                // Add Zone Performance context
+                if (project.statistics.zonePerformance.length > 0) {
+                    systemPrompt += `\n\nZone Performance (Bottom 3 by Delay):`;
+                    [...project.statistics.zonePerformance]
+                        .sort((a, b) => b.avgTime - a.avgTime)
+                        .slice(0, 3)
+                        .forEach((zone, idx) => {
+                            systemPrompt += `\n${idx + 1}. Zone ${zone.name}: ${zone.avgTime.toFixed(1)} days avg delay, ${zone.onTime.toFixed(1)}% on-time`;
+                        });
+                }
+
+                // Add Department (Role) Performance
+                if (project.statistics.deptPerformance.length > 0) {
+                    systemPrompt += `\n\nDepartment Performance (Highest Delay):`;
+                    project.statistics.deptPerformance.slice(0, 3).forEach((dept, idx) => {
+                        systemPrompt += `\n${idx + 1}. ${dept.name}: ${dept.avgTime.toFixed(1)} days avg delay`;
+                    });
+                }
+
+                // Add Behavioral Red Flags (Critical for forensic auditing)
+                const redFlags = project.statistics.behaviorMetrics.redFlags;
+                if (redFlags.length > 0) {
+                    systemPrompt += `\n\nBehavioral Red Flags Detected:`;
+                    redFlags.slice(0, 5).forEach((flag, idx) => {
+                        systemPrompt += `\n- [${flag.severity}] ${flag.type} by ${flag.entity}: ${flag.evidence}`;
                     });
                 }
 
@@ -278,5 +308,13 @@ export class SLAIntelligenceService {
         });
 
         return response.content;
+    }
+
+    /**
+     * Analyze raw text for playground
+     */
+    async analyzeText(text: string): Promise<ForensicAnalysis | undefined> {
+        const aiAnalysisService = new AIAnalysisService();
+        return aiAnalysisService.analyzeGenericRemarks(text, this.ollamaService);
     }
 }

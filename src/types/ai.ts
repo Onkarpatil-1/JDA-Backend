@@ -82,7 +82,8 @@ export interface AnomalyDetectionContext {
 /** Context for remark analysis prompt */
 export interface RemarkAnalysisContext {
     ticketId: string;
-    flowType: string; // 'Standard' or 'High Delay'
+    flowType: string;
+    flowTypeParent: string; // New field for context
     conversationHistory: string;
     totalDelay: number;
     employeeName: string;
