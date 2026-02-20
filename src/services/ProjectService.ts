@@ -1,17 +1,19 @@
 import Papa from 'papaparse';
 import type { ProjectData, ProjectMetadata, WorkflowStep } from '../types/index.js';
 import type { AIProvider } from './AIFactory.js';
-import { analyzeWorkflowData, parseWorkflowStep } from '../utils/csvAnalyzer.js';
+import { parseWorkflowStep, analyzeWorkflowData } from '../utils/csvAnalyzer.js';
 import { AIAnalysisService } from './AIAnalysisService.js';
+import { DatabaseService } from './DatabaseService.js';
 
 /**
  * In-memory project storage service
  */
 export class ProjectService {
-    private projects: Map<string, ProjectData> = new Map();
+    private dbService: DatabaseService;
     private aiAnalysisService?: AIAnalysisService;
 
-    constructor(aiAnalysisService?: AIAnalysisService) {
+    constructor(dbService: DatabaseService, aiAnalysisService?: AIAnalysisService) {
+        this.dbService = dbService;
         this.aiAnalysisService = aiAnalysisService;
     }
 
@@ -93,8 +95,8 @@ export class ProjectService {
                             statistics
                         };
 
-                        // Store in memory
-                        this.projects.set(projectId, projectData);
+                        // Store in database
+                        this.dbService.saveProject(projectData);
 
                         resolve(projectData);
                     } catch (error) {
@@ -112,21 +114,21 @@ export class ProjectService {
      * Get all projects
      */
     getAllProjects(): ProjectMetadata[] {
-        return Array.from(this.projects.values()).map(project => project.metadata);
+        return this.dbService.getAllProjectsMetadata();
     }
 
     /**
      * Get project by ID
      */
     getProject(projectId: string): ProjectData | undefined {
-        return this.projects.get(projectId);
+        return this.dbService.getProject(projectId);
     }
 
     /**
      * Delete project by ID
      */
     deleteProject(projectId: string): boolean {
-        return this.projects.delete(projectId);
+        return this.dbService.deleteProject(projectId);
     }
 
     /**
@@ -140,6 +142,6 @@ export class ProjectService {
      * Get project count
      */
     getProjectCount(): number {
-        return this.projects.size;
+        return this.dbService.getProjectCount();
     }
 }

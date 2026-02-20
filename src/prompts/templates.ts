@@ -319,11 +319,27 @@ CRITICAL INSTRUCTIONS:
 
 DELAY CATEGORIES (Use ONLY these 5 categories. Do not invent new ones):
 
-Category 1: Documentation & Compliance Issues
-Definition: Delays caused by incomplete, incorrect, or missing documentation from the applicant, or non-compliance with application requirements.
-Includes: Missing documents, incorrect files, incomplete forms, payment pending by applicant, late document submission, missing signatures or attestations.
+**CRITICAL: Document Clarity Analysis (when documentation issues are involved)**
+If "Documentation & Compliance Issues" is the **primary** category OR appears in "allApplicableCategories" with meaningful confidence (>= 0.3), you MUST analyze employee remarks to determine:
 
-Category 2: Process & Approval Bottlenecks
+1. **Did the employee clearly specify which document was missing?**
+   - YES: Employee mentioned specific document name (e.g., "e-sign plan document", "Bank Challan", "Voter ID card", "Electricity bill")
+   - NO: Employee gave vague instruction (e.g., "documents missing", "upload required documents", "complete your application")
+
+2. **If YES, extract the specific document name(s)**
+   - List all documents explicitly mentioned by the employee
+   - Use the exact terminology from employee remarks
+
+Examples:
+- ✅ CLEAR: "e-sign plan document is missing from the record, please upload" → documentClarityProvided: true, documentNames: ["e-sign plan document"]
+- ✅ CLEAR: "कृपया Voter ID card और Electricity bill अपलोड करें" → documentClarityProvided: true, documentNames: ["Voter ID card", "Electricity bill"]
+- ✅ CLEAR: "Bank Challan required" → documentClarityProvided: true, documentNames: ["Bank Challan"]
+- ❌ VAGUE: "आवश्यक दस्तावेज़ अपलोड करें" (Upload required documents) → documentClarityProvided: false
+- ❌ VAGUE: "Complete documentation pending" → documentClarityProvided: false
+- ❌ VAGUE: "Documents missing, please submit" → documentClarityProvided: false
+If there is no documentation-related evidence in the remarks, set "documentClarityProvided: false" and keep "documentNames: []".
+
+  Category 2: Process & Approval Bottlenecks
 Definition: Structural delays in the workflow due to pending approvals, inter-departmental coordination within JDA, or process-related wait times.
 Includes: Approval pending from senior authority, site inspection pending, technical review delays, file movement between desks, committee approvals, NOC from other JDA departments.
 
@@ -396,9 +412,9 @@ Based on BOTH the employee and applicant analyses:
 - Assign a primary delay category with clear reasoning
 - List all other applicable categories with reasoning
 - Provide overall sentiment summary of the applicant experience
-
+- The asgined primary category name should match exactly from one of the 5 categories I have shared above in delay categories list e.g Documentation & Compliance Issues, Process & Approval Bottlenecks etc (just the name of the category)
 ---
-
+ 
 OUTPUT FORMAT (JSON):
 {
   "overallRemarkAnalysis": {
@@ -445,6 +461,10 @@ OUTPUT FORMAT (JSON):
   "delayAnalysis": {
     "primaryDelayCategory": "One of the 5 allowed delay categories only.",
     "primaryCategoryConfidence": 0.0,
+    "documentClarityAnalysis": {
+      "documentClarityProvided": true or false,
+      "documentNames": ["Document name 1", "Document name 2"]
+    },
     "categorySummary": "Short English explanation of why this primary category was chosen, explicitly citing evidence from remarks.",
     "allApplicableCategories": [
       {

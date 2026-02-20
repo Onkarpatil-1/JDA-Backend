@@ -644,14 +644,19 @@ export class AIAnalysisService {
                             sentimentTrend: "Neutral",
                             complianceLevel: "Unknown"
                         },
-                        delayAnalysis: parsed.delayAnalysis || {
+                        delayAnalysis: {
                             primaryDelayCategory: "Unknown",
                             primaryCategoryConfidence: 0,
                             categorySummary: "Analysis incomplete",
                             allApplicableCategories: [],
                             processGaps: [],
                             painPoints: [],
-                            forcefulDelays: []
+                            forcefulDelays: [],
+                            ...(parsed.delayAnalysis || {}),
+                            documentClarityAnalysis: (parsed.delayAnalysis?.documentClarityAnalysis) || {
+                                documentClarityProvided: false,
+                                documentNames: []
+                            }
                         },
                         sentimentSummary: parsed.sentimentSummary || "Analysis complete.",
                         ticketInsightSummary: parsed.ticketInsightSummary || "Detailed forensic analysis of the critical path."
@@ -676,14 +681,19 @@ export class AIAnalysisService {
                             sentimentTrend: "Neutral",
                             complianceLevel: "Unknown"
                         },
-                        delayAnalysis: parsed.delayAnalysis || {
+                        delayAnalysis: {
                             primaryDelayCategory: parsed.primaryDelayCategory || "Unknown",
                             primaryCategoryConfidence: 0,
                             categorySummary: parsed.categorySummary || "Analysis incomplete",
                             allApplicableCategories: [],
                             processGaps: parsed.processGaps || [],
                             painPoints: parsed.painPoints || [],
-                            forcefulDelays: parsed.forcefulDelays || []
+                            forcefulDelays: parsed.forcefulDelays || [],
+                            ...(parsed.delayAnalysis || {}),
+                            documentClarityAnalysis: (parsed.delayAnalysis?.documentClarityAnalysis) || {
+                                documentClarityProvided: false,
+                                documentNames: []
+                            }
                         },
                         sentimentSummary: parsed.sentimentSummary || "Analysis complete.",
                         ticketInsightSummary: parsed.ticketInsightSummary || parsed.summary || "Detailed forensic analysis of the critical path."
