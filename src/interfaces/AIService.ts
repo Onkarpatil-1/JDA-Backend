@@ -6,6 +6,7 @@ export interface AIService {
         prompt: string,
         options?: {
             temperature?: number;
+            top_p?: number;
             systemPrompt?: string;
             format?: 'json' | 'text';
         }
@@ -15,6 +16,7 @@ export interface AIService {
         messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
         options?: {
             temperature?: number;
+            top_p?: number;
             format?: 'json' | 'text';
         }
     ): Promise<LLMResponse>;

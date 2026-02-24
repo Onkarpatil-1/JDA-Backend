@@ -23,6 +23,7 @@ export class OllamaService implements AIService {
         prompt: string,
         options?: {
             temperature?: number;
+            top_p?: number;
             systemPrompt?: string;
             format?: 'json' | 'text';
         }
@@ -37,6 +38,7 @@ export class OllamaService implements AIService {
                 format: options?.format,
                 options: {
                     temperature: options?.temperature ?? this.defaultTemperature,
+                    top_p: options?.top_p,
                     num_ctx: 4096,
                 },
             });
@@ -62,6 +64,7 @@ export class OllamaService implements AIService {
         messages: Array<{ role: 'user' | 'assistant' | 'system'; content: string }>,
         options?: {
             temperature?: number;
+            top_p?: number;
             format?: 'json' | 'text';
         }
     ): Promise<LLMResponse> {
@@ -74,6 +77,7 @@ export class OllamaService implements AIService {
                 format: options?.format,
                 options: {
                     temperature: options?.temperature ?? this.defaultTemperature,
+                    top_p: options?.top_p,
                     num_ctx: 4096,
                 },
             });

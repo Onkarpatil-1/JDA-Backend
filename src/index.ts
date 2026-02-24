@@ -39,7 +39,7 @@ async function startServer() {
 
     const databaseService = new DatabaseService();
     const projectService = new ProjectService(databaseService, aiAnalysisService);
-    const slaService = new SLAIntelligenceService(ollamaService, projectService);
+    const slaService = new SLAIntelligenceService(projectService);
 
     // Health check for Ollama
     console.log('🔍 Checking Ollama connection...');

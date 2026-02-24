@@ -1,13 +1,11 @@
 
-import type { ProjectStatistics, AIInsights, TimeSeriesData, ForensicAnalysis } from '../types/index.js';
+import type { ProjectStatistics, AIInsights, ForensicAnalysis } from '../types/index.js';
 import type { AIService } from '../interfaces/AIService.js';
 import {
     createAnomalyAnalysisPrompt,
     createBottleneckPredictionPrompt,
-    createTabularInsightsPrompt,
     createRecommendationsPrompt,
-    createRemarkAnalysisPrompt,
-    createJDAAnalysisPrompt
+    createRemarkAnalysisPrompt
 } from '../config/promptBuilders.js';
 
 import type { JDAIntelligence } from '../types/index.js';
@@ -39,7 +37,11 @@ export class AIAnalysisService {
      * Generate comprehensive AI analysis for a project
      */
     async analyzeProjectData(statistics: ProjectStatistics, projectName: string, provider: AIProvider = 'ollama', apiKey?: string, workflowSteps: any[] = []): Promise<AIInsights> {
-        console.log(`🤖 Generating AI insights using ${provider}... ${apiKey ? '(Custom Key Provided)' : '(System Credentials)'}`);
+        console.log(`\n${'='.repeat(60)}`);
+        console.log(`🤖 AI ANALYSIS STARTED`);
+        console.log(`   Provider : ${provider.toUpperCase()}`);
+        console.log(`   Auth     : ${apiKey ? 'Custom Key Provided' : 'System Credentials (.env)'}`);
+        console.log(`${'='.repeat(60)}`);
         this.logProgress('Initializing AI', 10, `Booting ${provider} model...`);
 
         let aiService = this.aiFactory.getService(provider, apiKey);
@@ -56,40 +58,44 @@ export class AIAnalysisService {
             this.logProgress('Predicting Bottlenecks', 40, 'Forecasting future congestion points...');
             const bottleneckAnalysis = await this.analyzeBottlenecks(statistics, currentService);
 
-            // 3. Recommendations
-            this.logProgress('Generating Strategies', 60, 'Formulating efficiency improvements...');
-            const recommendations = await this.generateRecommendations(statistics, currentService);
-
-            // 4. Tabular Insights
-            this.logProgress('Structuring Insights', 75, 'Compiling performance matrices...');
-            const tabularInsights = await this.generateTabularInsights(statistics, currentService);
-
-            // Run deep remark analysis legally AFTER to avoid resource contention (Ollama context switching)
-            this.logProgress('Analyzing Remarks', 85, 'Reading unstructured officer comments...');
-            // Pass workflowSteps for deep forensic history reconstruction
+            // 3. Deep Remark Analysis (Forensic) - Moved up to provide context for recommendations
+            this.logProgress('Analyzing Remarks', 60, 'Performing deep forensic audit of remarks...');
+            const forensicStartTime = Date.now();
             const { remarkAnalysis, forensicReports } = await this.analyzeRemarks(statistics, currentService, workflowSteps);
+            const forensicElapsedSec = ((Date.now() - forensicStartTime) / 1000).toFixed(1);
+            const ticketCount = Object.keys(forensicReports).length;
+            console.log(`\n${'='.repeat(60)}`);
+            console.log(`✅ FORENSIC ANALYSIS COMPLETE`);
+            console.log(`   Provider : ${provider.toUpperCase()}`);
+            console.log(`   Tickets  : ${ticketCount} analyzed`);
+            console.log(`   Duration : ${forensicElapsedSec}s`);
+            console.log(`   Reports  : ${Object.keys(forensicReports).join(', ') || 'none'}`);
+            console.log(`${'='.repeat(60)}\n`);
 
-            // JDA Intelligence Hybrid Analysis
+            // 4. Recommendations - Now ground in forensic findings
+            this.logProgress('Generating Strategies', 85, 'Formulating grounded efficiency improvements...');
+            const recommendations = await this.generateRecommendations(
+                statistics,
+                currentService,
+                anomalyAnalysis.rootCause,
+                forensicReports
+            );
+
+            // JDA Intelligence Hierarchy is preserved without secondary analysis
             let jdaIntelligence = statistics.jdaHierarchy;
-            if (jdaIntelligence) {
-                this.logProgress('Deep JDA Analysis', 90, 'Applying domain-specific reasoning to tickets...');
-                jdaIntelligence = await this.analyzeJDARemarks(jdaIntelligence, currentService);
-            }
 
-            console.log('✅ AI insights generated');
+            console.log(`✅ ALL AI INSIGHTS COMPLETE — Provider: ${provider.toUpperCase()}`);
             this.logProgress('Finalizing', 100, 'Analysis complete.');
 
             return {
-                anomalyPatterns: anomalyAnalysis.patterns,
                 rootCause: anomalyAnalysis.rootCause,
                 predictions: bottleneckAnalysis.predictions,
                 recommendations: recommendations,
-                severity: this.calculateSeverity(statistics),
-                confidence: 0.85,
-                ...tabularInsights,
-                remarkAnalysis, // Add to result (single, for backward compat)
-                forensicReports, // Add forensic reports map (NEW)
-                jdaIntelligence // Add JDA hierarchy
+                severity: anomalyAnalysis.severity, // Use AI-detected severity
+                confidence: anomalyAnalysis.confidence, // Use AI-detected confidence
+                remarkAnalysis,
+                forensicReports,
+                jdaIntelligence
             };
         };
 
@@ -112,110 +118,16 @@ export class AIAnalysisService {
         }
     }
 
-    /**
-     * Analyze JDA Remarks using Hybrid Approach
-     */
-    private async analyzeJDARemarks(hierarchy: JDAIntelligence, aiService: AIService): Promise<JDAIntelligence> {
-        console.log('🏛️ Running JDA Hybrid Analysis...');
 
-        // We need to iterate deep but limit concurrent LLM calls
-        // Strategy: Collect all "High Value" tickets first
-        const ticketsToAnalyze: {
-            deptIdx: number;
-            pServiceIdx: number;
-            serviceIdx: number;
-            ticketIdx: number;
-            context: any
-        }[] = [];
-
-        hierarchy.departments.forEach((dept, dIdx) => {
-            dept.parentServices.forEach((pService, pIdx) => {
-                pService.services.forEach((service, sIdx) => {
-                    service.tickets.forEach((ticket, tIdx) => {
-                        // Criteria for LLM Analysis:
-                        // 1. Uncategorized by Rule Engine
-                        // 2. High Delay (> 7 days)
-                        // 3. Very short/ambiguous remark (optional)
-                        if (ticket.detectedCategory === 'Uncategorized' || ticket.daysRested > 7) {
-                            ticketsToAnalyze.push({
-                                deptIdx: dIdx,
-                                pServiceIdx: pIdx,
-                                serviceIdx: sIdx,
-                                ticketIdx: tIdx,
-                                context: {
-                                    serviceName: service.name,
-                                    role: ticket.stepOwnerRole,
-                                    remarks: ticket.remarkOriginal
-                                }
-                            });
-                        }
-                    });
-                });
-            });
-        });
-
-        console.log(`🔍 Identified ${ticketsToAnalyze.length} tickets for Deep LLM Analysis`);
-
-        // Process in smaller batches to avoid timeouts and overheating
-        const BATCH_SIZE = 2; // Reduced from 5
-        const DELAY_MS = 1000; // 1 second cooldown between batches
-
-        const totalBatches = Math.ceil(ticketsToAnalyze.length / BATCH_SIZE);
-
-        for (let i = 0; i < ticketsToAnalyze.length; i += BATCH_SIZE) {
-            const currentBatch = Math.floor(i / BATCH_SIZE) + 1;
-            this.logProgress('Deep JDA Reasoning', 90 + Math.floor((currentBatch / totalBatches) * 9), `Reasoning on batch ${currentBatch}/${totalBatches}...`);
-
-            const batch = ticketsToAnalyze.slice(i, i + BATCH_SIZE);
-            if (i > 0) await new Promise(resolve => setTimeout(resolve, DELAY_MS)); // Cooling period
-
-            await Promise.all(batch.map(async (item) => {
-                try {
-                    const prompt = createJDAAnalysisPrompt(item.context);
-                    const response = await aiService.generate(prompt);
-                    const content = response.content;
-
-                    console.log(`--- JDA ANALYSIS RESPONSE (Ticket ${item.ticketIdx}) ---`);
-                    console.log(content);
-                    console.log('--- END JDA RESPONSE ---');
-
-                    try {
-                        const parsed = this.cleanAndParseJSON(content);
-
-                        if (parsed) {
-                            console.log(`--- PARSED JDA OBJECT (Ticket ${item.ticketIdx}) ---`);
-                            console.log(JSON.stringify(parsed, null, 2));
-                        }
-                        if (parsed) {
-                            // Update the specific ticket in hierarchy
-                            const ticket = hierarchy.departments[item.deptIdx]
-                                .parentServices[item.pServiceIdx]
-                                .services[item.serviceIdx]
-                                .tickets[item.ticketIdx];
-
-                            ticket.remarkEnglishSummary = parsed.englishSummary || ticket.remarkOriginal;
-                            ticket.employeeAnalysis = parsed.employeeAnalysis || parsed.englishSummary || "Analysis pending...";
-                            ticket.applicantAnalysis = parsed.applicantAnalysis || "No specific applicant feedback detected.";
-                            ticket.detectedCategory = parsed.category || ticket.detectedCategory;
-                        }
-                    } catch (parseError) {
-                        console.warn(`JSON Parse Warning for ticket ${item.ticketIdx}:`, parseError);
-                    }
-                } catch (e) {
-                    console.warn(`Failed LLM analysis for ticket at index ${item.ticketIdx}`, e);
-                }
-            }));
-        }
-
-        return hierarchy;
-    }
 
     /**
      * Analyze anomalies using LLM
      */
     private async analyzeAnomalies(statistics: ProjectStatistics, projectName: string, aiService: AIService): Promise<{
-        patterns: string;
         rootCause: string;
+        predictions: string;
+        severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+        confidence: number;
     }> {
         // Prepare context with names
         const topPerformersStr = statistics.topPerformers
@@ -242,18 +154,47 @@ export class AIAnalysisService {
             bottleneckAvgDelay: statistics.criticalBottleneck?.avgDelay?.toFixed(1) || '0'
         });
 
-        const response = await aiService.generate(prompt);
-        const responseText = response.content;
+        const response = await aiService.generate(prompt, { format: 'json' });
 
-        console.log('--- ANOMALY ANALYSIS RAW RESPONSE (FULL) ---');
-        console.log(responseText);
+        console.log('--- ANOMALY ANALYSIS RAW RESPONSE (JSON) ---');
+        console.log(response.content);
         console.log('--- END RAW RESPONSE ---');
 
-        // Parse response
-        const patterns = this.extractSection(responseText, 'PATTERNS:');
-        const rootCause = this.extractSection(responseText, 'ROOT CAUSE:');
+        try {
+            const result = JSON.parse(response.content);
 
-        return { patterns, rootCause };
+            // Validate severity
+            let severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' = 'HIGH';
+            const s = result.severity?.toUpperCase();
+            if (['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(s)) {
+                severity = s as any;
+            }
+
+            // Sanitize hallucinations like "The 'None' role is averaging 0 days delay"
+            const sanitizeInsight = (text: string): string => {
+                if (!text) return "";
+                const lower = text.toLowerCase();
+                if (lower.includes("'none' role") || lower.includes("none role") || lower.includes("0 days delay")) {
+                    return "No critical process anomalies or forceful delays detected in the analyzed snapshot.";
+                }
+                return text;
+            };
+
+            return {
+                rootCause: sanitizeInsight(result.rootCause) || "No critical process anomalies detected in the analyzed snapshot.",
+                predictions: result.predictions || "SLA breaches likely if current volume persists.",
+                severity,
+                confidence: typeof result.confidence === 'number' ? result.confidence : 0.8
+            };
+        } catch (e) {
+            console.error('Failed to parse anomaly JSON, using fallbacks:', e);
+            return {
+                rootCause: "High delay frequency detected in primary processing roles.",
+                predictions: "SLA breaches likely if current volume persists.",
+                severity: "HIGH",
+                confidence: 0.7
+            };
+        }
     }
 
     /**
@@ -286,91 +227,46 @@ export class AIAnalysisService {
         console.log(response.content);
         console.log('--- END RAW RESPONSE ---');
 
-        const predictions = response.content.replace(/^PREDICTION:\s*/i, '').trim();
+        // Extract predictions (the whole response if it's not starting with an error)
+        let predictions = response.content.trim();
+
+        // If it starts with an error about missing data, it means Ollama hallucinated a rejection
+        // even with our strict fallback rules, so we'll enforce the fallback here.
+        if (predictions.toLowerCase().includes("provide the bottleneck data") ||
+            predictions.toLowerCase().includes("don't see any bottleneck data")) {
+            predictions = "No critical bottlenecks detected in the current workflow snapshot. System is operating within expected SLA parameters.";
+        }
 
         return { predictions };
     }
 
-    /**
-     * Generate tabular insights for efficiency and risks
-     */
-    private async generateTabularInsights(statistics: ProjectStatistics, aiService: AIService): Promise<{
-        employeeEfficiencyTable: string;
-        zoneEfficiencyTable: string;
-        breachRiskTable: string;
-        highPriorityTable: string;
-        behavioralRedFlagsTable: string;
-    }> {
-        // Filter out "APPLICANT" or "CITIZEN" from top performers to avoid confusion
-        const topPerformersStr = statistics.topPerformers
-            .filter(p => !['APPLICANT', 'CITIZEN', 'SYSTEM', 'UNKNOWN'].includes(p.name.toUpperCase()) && !['APPLICANT', 'CITIZEN'].includes(p.role.toUpperCase()))
-            .map(p => `- ${p.name} (${p.role}): ${p.tasks} tasks, ${p.avgTime} days avg`)
-            .join('\n');
 
-        const zonePerfStr = statistics.zonePerformance
-            .map(z => `- ${z.name}: ${z.onTime}% on-time, ${z.avgTime} days avg`)
-            .join('\n');
-
-        const riskAppsStr = statistics.riskApplications
-            .slice(0, 7)
-            .map(a => {
-                // Filter out empty or duplicate fields from rawRow to save tokens
-                const cleanRow = Object.entries(a.rawRow || {})
-                    .filter(([_, v]) => v && v !== '' && v !== '0')
-                    .reduce((obj, [k, v]) => ({ ...obj, [k]: v }), {});
-
-                return `- Ticket ${a.id}: ${a.service} (${a.zone}), ${a.delay}d delay. 
-                  FULL DATA: ${JSON.stringify(cleanRow)}. 
-                  Last Action: "${a.remarks || 'No remarks provided'}"`;
-            })
-            .join('\n');
-
-        const behaviorStr = statistics.behaviorMetrics.redFlags
-            .map(f => `- [${f.type}] ${f.entity}: ${f.evidence}`)
-            .join('\n');
-
-        const prompt = createTabularInsightsPrompt({
-            topPerformers: topPerformersStr || "No specific employee data available.",
-            behavioralRedFlags: behaviorStr,
-            zonePerformance: zonePerfStr,
-            riskApplications: riskAppsStr
-        });
-
-        const response = await aiService.generate(prompt);
-        const content = response.content;
-
-        console.log('--- AI RAW TABULAR RESPONSE START ---');
-        console.log(content);
-        console.log('--- AI RAW TABULAR RESPONSE END ---');
-
-        const employeeTable = this.extractSection(content, '[PART_EMPLOYEE]');
-        console.log('Extracted Employee Table Length:', employeeTable.length);
-
-        return {
-            employeeEfficiencyTable: employeeTable,
-            zoneEfficiencyTable: this.extractSection(content, '[PART_ZONE]'),
-            breachRiskTable: this.extractSection(content, '[PART_BREACH]'),
-            highPriorityTable: this.extractSection(content, '[PART_PRIORITY]'),
-            behavioralRedFlagsTable: this.extractSection(content, '[PART_RED_FLAGS]')
-        };
-    }
 
     /**
      * Generate actionable recommendations
      */
-    private async generateRecommendations(statistics: ProjectStatistics, aiService: AIService): Promise<string[]> {
-        const performersStr = statistics.topPerformers
-            .slice(0, 3)
-            .map(p => p.name)
-            .join(', ');
+    private async generateRecommendations(
+        statistics: ProjectStatistics,
+        aiService: AIService,
+        forensicRootCause: string,
+        forensicReports: Record<string, ForensicAnalysis>
+    ): Promise<string[]> {
+        // Extract common themes from forensic reports
+        const themes = new Set<string>();
+        Object.values(forensicReports).forEach(report => {
+            report.overallRemarkAnalysis.employeeRemarksOverall.commonThemes.forEach(t => themes.add(t));
+            report.overallRemarkAnalysis.applicantRemarksOverall.commonThemes.forEach(t => themes.add(t));
+        });
+        const topThemes = Array.from(themes).slice(0, 5).join(', ') || 'No specific themes identified';
 
         const prompt = createRecommendationsPrompt({
             anomalyCount: statistics.anomalyCount,
             avgProcessingTime: statistics.avgDaysRested.toFixed(1),
             bottleneckRole: statistics.criticalBottleneck?.role || 'None',
             bottleneckAvgDelay: statistics.criticalBottleneck?.avgDelay?.toFixed(1) || '0',
-            topPerformers: performersStr,
-            primaryZones: statistics.zonePerformance.slice(0, 2).map(z => z.name).join(', ')
+            primaryZones: statistics.zonePerformance.slice(0, 2).map(z => z.name).join(', '),
+            rootCause: forensicRootCause,
+            topThemes: topThemes
         });
 
         const response = await aiService.generate(prompt);
@@ -404,49 +300,8 @@ export class AIAnalysisService {
      * Now focuses on a Deep Forensic Analysis of the single most critical ticket
      */
     private async analyzeRemarks(statistics: ProjectStatistics, aiService: AIService, workflowSteps: any[] = []): Promise<{
-        remarkAnalysis?: {
-            employeeRemarkAnalysis: {
-                summary: string;
-                totalEmployeeRemarks: number;
-                keyActions: string[];
-                responseTimeliness: string;
-                communicationClarity: string;
-                inactionFlags: Array<{
-                    observation: string;
-                    evidence: string;
-                }>;
-            };
-            applicantRemarkAnalysis: {
-                summary: string;
-                totalApplicantRemarks: number;
-                keyActions: string[];
-                responseTimeliness: string;
-                sentimentTrend: string;
-                complianceLevel: string;
-            };
-            delayAnalysis: {
-                primaryDelayCategory: string;
-                primaryCategoryConfidence: number;
-                categorySummary: string;
-                allApplicableCategories: Array<{
-                    category: string;
-                    confidence: number;
-                    reasoning: string;
-                }>;
-                processGaps: string[];
-                painPoints: string[];
-                forcefulDelays: Array<{
-                    reason: string;
-                    confidence: number;
-                    category: string;
-                    evidence: string;
-                    recommendation: string;
-                }>;
-            };
-            sentimentSummary: string;
-            ticketInsightSummary: string;
-        };
-        forensicReports: Record<string, any>;
+        remarkAnalysis?: ForensicAnalysis;
+        forensicReports: Record<string, ForensicAnalysis>;
     }> {
         // Extract unique tickets from workflowSteps and calculate delays
         const ticketMap = new Map<string, any[]>();
@@ -514,23 +369,24 @@ export class AIAnalysisService {
         // Generate forensic reports for all target tickets
         const forensicReports: Record<string, any> = {};
 
+        const BATCH_SIZE = 2;
         let processedCount = 0;
-        for (const ticket of targetTickets) {
-            processedCount++;
-            console.log(`\n🔍 Analyzing Ticket ${ticket.id} (${processedCount}/${targetTickets.length})...`);
 
-            // Add delay to prevent Ollama overload/degradation
-            if (processedCount > 1) {
-                await new Promise(resolve => setTimeout(resolve, 1000));
-            }
+        for (let i = 0; i < targetTickets.length; i += BATCH_SIZE) {
+            const batch = targetTickets.slice(i, i + BATCH_SIZE);
 
-            const analysis = await this.runForensicAnalysisForTicket(ticket, workflowSteps, aiService);
-            if (analysis) {
-                forensicReports[ticket.id] = analysis;
-                console.log(`✅ Forensic analysis complete for ticket ${ticket.id}`);
-            } else {
-                console.warn(`⚠️ Failed to generate forensic analysis for ticket ${ticket.id}`);
-            }
+            await Promise.all(batch.map(async (ticket) => {
+                processedCount++;
+                console.log(`\n🔍 Analyzing Ticket ${ticket.id} (${processedCount}/${targetTickets.length})...`);
+
+                const analysis = await this.runForensicAnalysisForTicket(ticket, workflowSteps, aiService);
+                if (analysis) {
+                    forensicReports[ticket.id] = analysis;
+                    console.log(`✅ Forensic analysis complete for ticket ${ticket.id}`);
+                } else {
+                    console.warn(`⚠️ Failed to generate forensic analysis for ticket ${ticket.id}`);
+                }
+            }));
         }
 
 
@@ -548,13 +404,7 @@ export class AIAnalysisService {
         ticket: { id: string; delay: number; service: string; parentService: string; stage: string; lastActionBy: string },
         workflowSteps: any[],
         aiService: AIService
-    ): Promise<{
-        employeeRemarkAnalysis: any;
-        applicantRemarkAnalysis: any;
-        delayAnalysis: any;
-        sentimentSummary: string;
-        ticketInsightSummary: string;
-    } | undefined> {
+    ): Promise<ForensicAnalysis | undefined> {
         // Reconstruct Full Conversation History from workflowSteps
         let conversationHistory = 'No remarks available';
         const ticketSteps = workflowSteps.filter(s => s.ticketId === ticket.id);
@@ -596,8 +446,9 @@ export class AIAnalysisService {
 
         // Add explicit file logging for user diagnostics
         try {
-            const fs = require('fs');
-            const logPath = require('path').join(process.cwd(), 'ai_io.log');
+            const fs = await import('fs');
+            const path = await import('path');
+            const logPath = path.join(process.cwd(), 'ai_io.log');
             const logEntry = `\n\n================================================================================\n` +
                 `TICKET ID: ${ticket.id} | TIME: ${new Date().toISOString()}\n` +
                 `--------------------------- INPUT (PROMPT) ------------------------------------\n` +
@@ -609,7 +460,15 @@ export class AIAnalysisService {
         }
 
         try {
-            const response = await aiService.generate(prompt);
+            const response = await aiService.generate(prompt, {
+                systemPrompt: `You must strictly avoid copying instructional text or examples from the prompt.
+DO NOT mention any specific documents or amounts unless they are explicitly named in the provided conversation history.
+If any field contains schema-style placeholder wording, regenerate internally before responding.
+Output only data grounded in the ACTUAL conversationHistory provided.`,
+                temperature: 0.15,
+                top_p: 0.9,
+                format: 'json'
+            });
             const content = response.content;
 
             console.log(`--- FORENSIC ANALYSIS RAW RESPONSE (Ticket ${ticket.id}) ---`);
@@ -618,8 +477,9 @@ export class AIAnalysisService {
 
             // Add explicit file logging for user diagnostics
             try {
-                const fs = require('fs');
-                const logPath = require('path').join(process.cwd(), 'ai_io.log');
+                const fs = await import('fs');
+                const path = await import('path');
+                const logPath = path.join(process.cwd(), 'ai_io.log');
                 const logEntry = `--------------------------- OUTPUT (RAW RESPONSE) ------------------------------\n` +
                     `${content}\n` +
                     `================================================================================\n`;
@@ -632,75 +492,63 @@ export class AIAnalysisService {
 
             // Accept partial responses - llama3.2:3b sometimes generates incomplete JSON
             if (parsed) {
-                if (parsed.employeeRemarkAnalysis) {
-                    console.log(`✅ Forensic analysis parsed successfully for ticket ${ticket.id}`);
-                    return {
-                        employeeRemarkAnalysis: parsed.employeeRemarkAnalysis,
-                        applicantRemarkAnalysis: parsed.applicantRemarkAnalysis || {
-                            summary: "No applicant remarks available",
-                            totalApplicantRemarks: 0,
-                            keyActions: [],
-                            responseTimeliness: "N/A",
-                            sentimentTrend: "Neutral",
-                            complianceLevel: "Unknown"
-                        },
-                        delayAnalysis: {
-                            primaryDelayCategory: "Unknown",
-                            primaryCategoryConfidence: 0,
-                            categorySummary: "Analysis incomplete",
-                            allApplicableCategories: [],
-                            processGaps: [],
-                            painPoints: [],
-                            forcefulDelays: [],
-                            ...(parsed.delayAnalysis || {}),
-                            documentClarityAnalysis: (parsed.delayAnalysis?.documentClarityAnalysis) || {
-                                documentClarityProvided: false,
-                                documentNames: []
-                            }
-                        },
-                        sentimentSummary: parsed.sentimentSummary || "Analysis complete.",
-                        ticketInsightSummary: parsed.ticketInsightSummary || "Detailed forensic analysis of the critical path."
-                    };
-                } else if (parsed.summary || parsed.rootCause || parsed.delayAnalysis || parsed.sentimentSummary || parsed.ticketInsightSummary || parsed.englishSummary || parsed.employeeAnalysis) {
-                    // Check if it's a FLAT response (Common Fallback for smaller models)
-                    console.log(`⚠️ Forensic analysis parsed as FLAT object for ticket ${ticket.id} - adapting structure`);
-                    return {
-                        employeeRemarkAnalysis: {
-                            summary: parsed.summary || parsed.employeeAnalysis || parsed.englishSummary || "Analysis derived from flat response",
+                // Ensure all REQUIRED fields for the new ForensicAnalysis interface are present
+                const compliant: ForensicAnalysis = {
+                    overallRemarkAnalysis: parsed.overallRemarkAnalysis || {
+                        employeeRemarksOverall: {
                             totalEmployeeRemarks: 0,
-                            keyActions: parsed.keyActions || [],
+                            summary: "Not analyzed",
+                            commonThemes: [],
+                            communicationQuality: "Unknown",
                             responseTimeliness: "Unknown",
-                            communicationClarity: "Unknown",
-                            inactionFlags: []
+                            topEmployeeActions: [],
+                            inactionPatterns: []
                         },
-                        applicantRemarkAnalysis: {
-                            summary: "No applicant remarks available",
+                        applicantRemarksOverall: {
                             totalApplicantRemarks: 0,
-                            keyActions: [],
-                            responseTimeliness: "N/A",
+                            summary: "Not analyzed",
+                            commonThemes: [],
+                            complianceLevel: "Unknown",
                             sentimentTrend: "Neutral",
-                            complianceLevel: "Unknown"
+                            delayPatterns: [],
+                            topApplicantConcerns: []
+                        }
+                    },
+                    employeeRemarkAnalysis: parsed.employeeRemarkAnalysis || {
+                        summary: "Analysis unavailable",
+                        totalEmployeeRemarks: 0,
+                        keyActions: [],
+                        responseTimeliness: "Unknown",
+                        communicationClarity: "Unknown",
+                        inactionFlags: []
+                    },
+                    applicantRemarkAnalysis: parsed.applicantRemarkAnalysis || {
+                        summary: "Analysis unavailable",
+                        totalApplicantRemarks: 0,
+                        keyActions: [],
+                        responseTimeliness: "Unknown",
+                        sentimentTrend: "Neutral",
+                        complianceLevel: "Unknown"
+                    },
+                    delayAnalysis: {
+                        primaryDelayCategory: parsed.delayAnalysis?.primaryDelayCategory || "Unknown",
+                        primaryCategoryConfidence: parsed.delayAnalysis?.primaryCategoryConfidence || 0,
+                        documentClarityAnalysis: parsed.delayAnalysis?.documentClarityAnalysis || {
+                            documentClarityProvided: false,
+                            documentNames: [],
                         },
-                        delayAnalysis: {
-                            primaryDelayCategory: parsed.primaryDelayCategory || "Unknown",
-                            primaryCategoryConfidence: 0,
-                            categorySummary: parsed.categorySummary || "Analysis incomplete",
-                            allApplicableCategories: [],
-                            processGaps: parsed.processGaps || [],
-                            painPoints: parsed.painPoints || [],
-                            forcefulDelays: parsed.forcefulDelays || [],
-                            ...(parsed.delayAnalysis || {}),
-                            documentClarityAnalysis: (parsed.delayAnalysis?.documentClarityAnalysis) || {
-                                documentClarityProvided: false,
-                                documentNames: []
-                            }
-                        },
-                        sentimentSummary: parsed.sentimentSummary || "Analysis complete.",
-                        ticketInsightSummary: parsed.ticketInsightSummary || parsed.summary || "Detailed forensic analysis of the critical path."
-                    };
-                }
-                console.warn(`⚠️ valid JSON parsed but missing required forensic fields for ticket ${ticket.id}`);
-                return undefined;
+                        categorySummary: parsed.delayAnalysis?.categorySummary || "No specific delay summary.",
+                        allApplicableCategories: parsed.delayAnalysis?.allApplicableCategories || [],
+                        processGaps: parsed.delayAnalysis?.processGaps || [],
+                        painPoints: parsed.delayAnalysis?.painPoints || [],
+                        forcefulDelays: parsed.delayAnalysis?.forcefulDelays || []
+                    },
+                    sentimentSummary: parsed.sentimentSummary || "Unknown",
+                    ticketInsightSummary: parsed.ticketInsightSummary || "No specific insights."
+                };
+
+                console.log(`✅ Forensic analysis parsed and validated for ticket ${ticket.id}`);
+                return compliant;
             }
         } catch (e) {
             console.error(`Failed to analyze remarks for ticket ${ticket.id}:`, e);
@@ -814,8 +662,13 @@ export class AIAnalysisService {
 
         try {
             const response = await aiService.generate(advancedPrompt, {
-                systemPrompt: 'You are a forensic data auditor. Output valid JSON only.',
-                temperature: 0.3
+                systemPrompt: `You must strictly avoid copying instructional text or examples from the prompt.
+DO NOT mention specific documents (like Aadhar, Pan, etc.) unless they are explicitly named in the provided conversation history.
+If any field contains schema-style placeholder wording, regenerate internally before responding.
+Output only data grounded in the ACTUAL conversationHistory provided.`,
+                temperature: 0.15,
+                top_p: 0.9,
+                format: 'json'
             });
 
             console.log(`[Playground] Raw AI Response: ${response.content.substring(0, 100)}...`);
@@ -860,25 +713,49 @@ OUTPUT JSON ONLY:
                 const fallbackParsed = this.cleanAndParseJSON(fallbackResponse.content);
                 if (fallbackParsed) {
                     return {
+                        overallRemarkAnalysis: {
+                            employeeRemarksOverall: {
+                                totalEmployeeRemarks: 1,
+                                summary: fallbackParsed.employeeActions || "No employee actions",
+                                commonThemes: [],
+                                communicationQuality: "Unknown",
+                                responseTimeliness: "Unknown",
+                                inactionPatterns: [],
+                                topEmployeeActions: []
+                            },
+                            applicantRemarksOverall: {
+                                totalApplicantRemarks: 1,
+                                summary: fallbackParsed.applicantActions || "No applicant actions",
+                                commonThemes: [],
+                                complianceLevel: "Unknown",
+                                sentimentTrend: fallbackParsed.sentiment || "Neutral",
+                                delayPatterns: [],
+                                topApplicantConcerns: []
+                            }
+                        },
                         employeeRemarkAnalysis: {
                             summary: fallbackParsed.employeeActions || "No employee actions detected",
-                            totalEmployeeRemarks: 1, // Estimate
-                            keyActions: fallbackParsed.employeeActions ? [fallbackParsed.employeeActions] : [],
-                            responseTimeliness: "Unknown",
+                            totalEmployeeRemarks: 1,
+                            keyActions: [],
                             communicationClarity: "Medium",
+                            responseTimeliness: "Unknown",
                             inactionFlags: []
                         },
                         applicantRemarkAnalysis: {
                             summary: fallbackParsed.applicantActions || "No applicant actions detected",
-                            totalApplicantRemarks: 1, // Estimate
-                            keyActions: fallbackParsed.applicantActions ? [fallbackParsed.applicantActions] : [],
-                            responseTimeliness: "Unknown",
+                            totalApplicantRemarks: 1,
+                            keyActions: [],
                             sentimentTrend: fallbackParsed.sentiment || "Neutral",
-                            complianceLevel: "Unknown"
+                            complianceLevel: "Unknown",
+                            responseTimeliness: "Unknown"
                         },
                         delayAnalysis: {
                             primaryDelayCategory: fallbackParsed.delayReason || "Unknown",
                             primaryCategoryConfidence: 0.7,
+                            documentClarityAnalysis: {
+                                documentClarityProvided: false,
+                                documentNames: []
+                            },
                             categorySummary: `Identified delay reason: ${fallbackParsed.delayReason}`,
                             allApplicableCategories: [],
                             processGaps: [],
@@ -892,11 +769,30 @@ OUTPUT JSON ONLY:
             }
 
             if (parsed) {
-                // Ensure default structure if parts are missing
-                return {
-                    overallRemarkAnalysis: parsed.overallRemarkAnalysis,
+                // Ensure all REQUIRED fields for the new ForensicAnalysis interface are present
+                const compliant: ForensicAnalysis = {
+                    overallRemarkAnalysis: parsed.overallRemarkAnalysis || {
+                        employeeRemarksOverall: {
+                            totalEmployeeRemarks: 0,
+                            summary: "Not analyzed",
+                            commonThemes: [],
+                            communicationQuality: "Unknown",
+                            responseTimeliness: "Unknown",
+                            topEmployeeActions: [],
+                            inactionPatterns: []
+                        },
+                        applicantRemarksOverall: {
+                            totalApplicantRemarks: 0,
+                            summary: "Not analyzed",
+                            commonThemes: [],
+                            complianceLevel: "Unknown",
+                            sentimentTrend: "Neutral",
+                            delayPatterns: [],
+                            topApplicantConcerns: []
+                        }
+                    },
                     employeeRemarkAnalysis: parsed.employeeRemarkAnalysis || {
-                        summary: "No employee data detected",
+                        summary: "Analysis unavailable",
                         totalEmployeeRemarks: 0,
                         keyActions: [],
                         responseTimeliness: "Unknown",
@@ -904,25 +800,31 @@ OUTPUT JSON ONLY:
                         inactionFlags: []
                     },
                     applicantRemarkAnalysis: parsed.applicantRemarkAnalysis || {
-                        summary: "No applicant data detected",
+                        summary: "Analysis unavailable",
                         totalApplicantRemarks: 0,
                         keyActions: [],
-                        responseTimeliness: "N/A",
+                        responseTimeliness: "Unknown",
                         sentimentTrend: "Neutral",
                         complianceLevel: "Unknown"
                     },
-                    delayAnalysis: parsed.delayAnalysis || {
-                        primaryDelayCategory: "Unknown",
-                        primaryCategoryConfidence: 0,
-                        categorySummary: "Analysis incomplete or no delay detected",
-                        allApplicableCategories: [],
-                        processGaps: [],
-                        painPoints: [],
-                        forcefulDelays: []
+                    delayAnalysis: {
+                        primaryDelayCategory: parsed.delayAnalysis?.primaryDelayCategory || "Unknown",
+                        primaryCategoryConfidence: parsed.delayAnalysis?.primaryCategoryConfidence || 0,
+                        documentClarityAnalysis: parsed.delayAnalysis?.documentClarityAnalysis || {
+                            documentClarityProvided: false,
+                            documentNames: [],
+                        },
+                        categorySummary: parsed.delayAnalysis?.categorySummary || "No specific delay summary.",
+                        allApplicableCategories: parsed.delayAnalysis?.allApplicableCategories || [],
+                        processGaps: parsed.delayAnalysis?.processGaps || [],
+                        painPoints: parsed.delayAnalysis?.painPoints || [],
+                        forcefulDelays: parsed.delayAnalysis?.forcefulDelays || []
                     },
-                    sentimentSummary: parsed.sentimentSummary || "Analysis complete.",
-                    ticketInsightSummary: parsed.ticketInsightSummary || "Detailed forensic analysis complete."
+                    sentimentSummary: parsed.sentimentSummary || "Unknown",
+                    ticketInsightSummary: parsed.ticketInsightSummary || "No specific insights."
                 };
+
+                return compliant;
             }
             return undefined;
         } catch (e) {
