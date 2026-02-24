@@ -3,7 +3,6 @@
  * Shared interfaces for AI prompts, contexts, and configurations.
  */
 
-import type { AlertRequest } from './index.js';
 
 // --------------------------------------------------------------------------
 // PROMPT CONTEXT TYPES
@@ -35,49 +34,17 @@ export interface BottleneckPredictionContext {
     highRiskApps: string;
 }
 
-/** Context for tabular insights prompt */
-export interface TabularInsightsContext {
-    topPerformers: string;
-    zonePerformance: string;
-    riskApplications: string;
-    behavioralRedFlags: string;
-}
-
 /** Context for recommendations prompt */
 export interface RecommendationsContext {
     anomalyCount: number;
     avgProcessingTime: string;
     bottleneckRole: string;
     bottleneckAvgDelay: string;
-    topPerformers: string;
     primaryZones: string;
+    rootCause: string;
+    topThemes: string;
 }
 
-/** Context for prediction prompt */
-export interface PredictionContext {
-    metricName: string;
-    unit: string;
-    dataPoints: number;
-    recentValues: string;
-    recentTimestamps: string;
-    trend: 'INCREASING' | 'DECREASING' | 'STABLE';
-    avgDailyChange: string;
-    currentValue: number;
-    sevenDayAvg: string;
-    horizonDays: number;
-}
-
-/** Context for anomaly detection prompt */
-export interface AnomalyDetectionContext {
-    metricName: string;
-    currentValue: number;
-    timestamp: string;
-    historicalMean: string;
-    historicalStdDev: string;
-    calculatedZScore: string;
-    sampleSize: number;
-    recentValues: string;
-}
 
 /** Context for remark analysis prompt */
 export interface RemarkAnalysisContext {
@@ -88,11 +55,4 @@ export interface RemarkAnalysisContext {
     totalDelay: number;
     employeeName: string;
     stage: string;
-}
-
-/** Context for JDA specific remark analysis prompt */
-export interface JDAAnalysisContext {
-    serviceName: string;
-    role: string;
-    remarks: string;
 }

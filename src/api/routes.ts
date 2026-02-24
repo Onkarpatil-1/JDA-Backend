@@ -50,80 +50,7 @@ export function createRouter(
         }
     });
 
-    /**
-     * Anomaly detection endpoint
-     * POST /api/v1/anomaly/detect
-     */
-    router.post('/anomaly/detect', async (req: Request, res: Response) => {
-        try {
-            const { current, historical } = req.body;
 
-            if (!current || !historical) {
-                return res.status(400).json({
-                    error: 'Missing required fields: current and historical',
-                });
-            }
-
-            const result = await slaService.detectAnomaly(current, historical);
-            res.json(result);
-        } catch (error) {
-            console.error('Anomaly detection error:', error);
-            res.status(500).json({
-                error: 'Failed to detect anomaly',
-                details: String(error),
-            });
-        }
-    });
-
-    /**
-     * Prediction endpoint
-     * POST /api/v1/predict
-     */
-    router.post('/predict', async (req: Request, res: Response) => {
-        try {
-            const { historical, horizonDays = 3 } = req.body;
-
-            if (!historical) {
-                return res.status(400).json({
-                    error: 'Missing required field: historical',
-                });
-            }
-
-            const result = await slaService.predictMetrics(historical, horizonDays);
-            res.json(result);
-        } catch (error) {
-            console.error('Prediction error:', error);
-            res.status(500).json({
-                error: 'Failed to generate prediction',
-                details: String(error),
-            });
-        }
-    });
-
-    /**
-     * Alert generation endpoint
-     * POST /api/v1/alert/generate
-     */
-    router.post('/alert/generate', async (req: Request, res: Response) => {
-        try {
-            const alertRequest = req.body;
-
-            if (!alertRequest.metricName || !alertRequest.currentValue || !alertRequest.threshold) {
-                return res.status(400).json({
-                    error: 'Missing required fields: metricName, currentValue, threshold',
-                });
-            }
-
-            const result = await slaService.generateAlert(alertRequest);
-            res.json(result);
-        } catch (error) {
-            console.error('Alert generation error:', error);
-            res.status(500).json({
-                error: 'Failed to generate alert',
-                details: String(error),
-            });
-        }
-    });
 
     /**
      * General query endpoint (with conversation support)
@@ -131,7 +58,7 @@ export function createRouter(
      */
     router.post('/query', async (req: Request, res: Response) => {
         try {
-            const { question, context, conversationHistory } = req.body;
+            const { question, context, aiProvider, apiKey } = req.body;
 
             if (!question) {
                 return res.status(400).json({
@@ -139,10 +66,7 @@ export function createRouter(
                 });
             }
 
-            // Use chatQuery if conversation history is provided, otherwise use simple query
-            const result = conversationHistory && conversationHistory.length > 0
-                ? await slaService.chatQuery(question, conversationHistory, context)
-                : await slaService.query(question, context);
+            const result = await slaService.query(question, context, aiProvider || 'ollama', apiKey);
 
             res.json({ answer: result });
         } catch (error) {
@@ -175,12 +99,12 @@ export function createRouter(
      */
     router.post('/analyze/playground', async (req: Request, res: Response) => {
         try {
-            const { text } = req.body;
+            const { text, aiProvider, apiKey } = req.body;
             if (!text) {
                 return res.status(400).json({ error: 'Missing text content' });
             }
 
-            const result = await slaService.analyzeText(text);
+            const result = await slaService.analyzeText(text, aiProvider || 'ollama', apiKey);
 
             if (!result) {
                 return res.status(500).json({ error: 'Failed to generate analysis' });

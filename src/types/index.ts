@@ -1,59 +1,5 @@
 // Core Types for SLA Intelligence
 
-export interface MetricData {
-    timestamp: string;
-    value: number;
-    metricName: string;
-    metadata?: Record<string, any>;
-}
-
-export interface TimeSeriesData {
-    metricName: string;
-    values: number[];
-    timestamps: string[];
-    unit?: string;
-}
-
-export interface AnomalyResult {
-    isAnomaly: boolean;
-    severity: 'NORMAL' | 'WARNING' | 'CRITICAL';
-    score: number;
-    explanation: string;
-    confidence: number;
-    detectedAt: string;
-    metadata?: {
-        zScore?: number;
-        threshold?: number;
-        historicalMean?: number;
-        historicalStdDev?: number;
-    };
-}
-
-export interface PredictionResult {
-    predictions: Array<{
-        timestamp: string;
-        predictedValue: number;
-        confidence: number;
-    }>;
-    trend: 'INCREASING' | 'DECREASING' | 'STABLE';
-    explanation: string;
-    modelUsed: string;
-}
-
-export interface AlertRequest {
-    metricName: string;
-    currentValue: number;
-    threshold: number;
-    severity: 'WARNING' | 'CRITICAL';
-    context?: string;
-}
-
-export interface AlertResponse {
-    message: string;
-    recommendation: string;
-    urgency: 'LOW' | 'MEDIUM' | 'HIGH';
-}
-
 export interface OllamaConfig {
     host: string;
     model: string;
@@ -205,7 +151,7 @@ export interface JDAIntelligence {
 }
 
 export interface ForensicAnalysis {
-    overallRemarkAnalysis?: {
+    overallRemarkAnalysis: {
         employeeRemarksOverall: {
             totalEmployeeRemarks: number;
             summary: string;
@@ -247,6 +193,10 @@ export interface ForensicAnalysis {
     delayAnalysis: {
         primaryDelayCategory: string;
         primaryCategoryConfidence: number;
+        documentClarityAnalysis: {
+            documentClarityProvided: boolean;
+            documentNames: string[];
+        };
         categorySummary: string;
         allApplicableCategories: Array<{
             category: string;
@@ -269,18 +219,11 @@ export interface ForensicAnalysis {
 
 // AI-Powered Insights
 export interface AIInsights {
-    anomalyPatterns: string;
     rootCause: string;
     predictions: string;
     recommendations: string[];
     severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
     confidence: number;
-    // Tabular insights
-    employeeEfficiencyTable?: string;
-    zoneEfficiencyTable?: string;
-    breachRiskTable?: string;
-    highPriorityTable?: string;
-    behavioralRedFlagsTable?: string;
     remarkAnalysis?: ForensicAnalysis;
     // Per-ticket forensic analysis map (NEW)
     forensicReports?: Record<string, ForensicAnalysis>;

@@ -8,7 +8,7 @@ export class GeminiService implements AIService {
     private model: string;
     private defaultTemperature: number;
 
-    constructor(apiKey: string, model: string = 'gemini-pro', temperature: number = 0.3) {
+    constructor(apiKey: string, model: string = 'gemini-2.0-flash', temperature: number = 0.3) {
         this.genAI = new GoogleGenerativeAI(apiKey);
         this.model = model;
         this.defaultTemperature = temperature;

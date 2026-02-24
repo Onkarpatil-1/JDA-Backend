@@ -1,0 +1,66 @@
+export interface ForensicAnalysis {
+    overallRemarkAnalysis: {
+        employeeRemarksOverall: {
+            totalEmployeeRemarks: number;
+            summary: string;
+            commonThemes: string[];
+            communicationQuality: string;
+            responseTimeliness: string;
+            inactionPatterns: string[];
+            topEmployeeActions: string[];
+        };
+        applicantRemarksOverall: {
+            totalApplicantRemarks: number;
+            summary: string;
+            commonThemes: string[];
+            complianceLevel: string;
+            sentimentTrend: string;
+            delayPatterns: string[];
+            topApplicantConcerns: string[];
+        };
+    };
+    employeeRemarkAnalysis: {
+        summary: string;
+        totalEmployeeRemarks: number;
+        keyActions: string[];
+        responseTimeliness: string;
+        communicationClarity: string;
+        inactionFlags: Array<{
+            observation: string;
+            evidence: string;
+        }>;
+    };
+    applicantRemarkAnalysis: {
+        summary: string;
+        totalApplicantRemarks: number;
+        keyActions: string[];
+        responseTimeliness: string;
+        sentimentTrend: string;
+        complianceLevel: string;
+    };
+    delayAnalysis: {
+        primaryDelayCategory: string;
+        primaryCategoryConfidence: number;
+        documentClarityAnalysis: {
+            documentClarityProvided: boolean;
+            documentNames: string[];
+        };
+        categorySummary: string;
+        allApplicableCategories: Array<{
+            category: string;
+            confidence: number;
+            reasoning: string;
+        }>;
+        processGaps: string[];
+        painPoints: string[];
+        forcefulDelays: Array<{
+            reason: string;
+            confidence: number;
+            category: string;
+            evidence: string;
+            recommendation: string;
+        }>;
+    };
+    sentimentSummary: string;
+    ticketInsightSummary: string;
+}
