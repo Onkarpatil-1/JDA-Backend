@@ -9,14 +9,20 @@ import {
     ANOMALY_ANALYSIS_USER_PROMPT,
     BOTTLENECK_PREDICTION_USER_PROMPT,
     RECOMMENDATIONS_USER_PROMPT,
-    REMARK_ANALYSIS_USER_PROMPT
+    REMARK_ANALYSIS_USER_PROMPT,
+    DOCUMENT_EXTRACTION_USER_PROMPT,
+    CATEGORY_CLASSIFICATION_PROMPT,
+    ZONE_OUTLIER_REPORT_PROMPT
 } from '../prompts/templates.js';
 
 import type {
     AnomalyAnalysisContext,
     BottleneckPredictionContext,
     RecommendationsContext,
-    RemarkAnalysisContext
+    RemarkAnalysisContext,
+    DocumentExtractionContext,
+    CategoryClassificationContext,
+    ZoneOutlierReportContext
 } from '../types/ai.js';
 
 
@@ -57,3 +63,17 @@ export const createRemarkAnalysisPrompt = (context: RemarkAnalysisContext): stri
     return interpolate(REMARK_ANALYSIS_USER_PROMPT, context);
 };
 
+export const createDocumentExtractionPrompt = (context: DocumentExtractionContext): string => {
+    return interpolate(DOCUMENT_EXTRACTION_USER_PROMPT, context);
+};
+
+export const createCategoryClassificationPrompt = (context: CategoryClassificationContext): string => {
+    return interpolate(CATEGORY_CLASSIFICATION_PROMPT, context);
+};
+
+export const createZoneOutlierReportPrompt = (context: ZoneOutlierReportContext): string => {
+    return interpolate(ZONE_OUTLIER_REPORT_PROMPT, {
+        ...context,
+        totalDelay: String(context.totalDelay)
+    });
+};

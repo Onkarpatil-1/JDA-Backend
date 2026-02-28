@@ -1,11 +1,14 @@
 
-import type { ProjectStatistics, AIInsights, ForensicAnalysis } from '../types/index.js';
+import type { ProjectStatistics, AIInsights, ForensicAnalysis, ZoneOutlierReport, ZoneOutlierTicketReport } from '../types/index.js';
 import type { AIService } from '../interfaces/AIService.js';
 import {
     createAnomalyAnalysisPrompt,
     createBottleneckPredictionPrompt,
     createRecommendationsPrompt,
-    createRemarkAnalysisPrompt
+    createRemarkAnalysisPrompt,
+    createDocumentExtractionPrompt,
+    createCategoryClassificationPrompt,
+    createZoneOutlierReportPrompt
 } from '../config/promptBuilders.js';
 
 import type { JDAIntelligence } from '../types/index.js';
@@ -31,6 +34,176 @@ export class AIAnalysisService {
         if (this.progressService) {
             this.progressService.updateProgress(stage, progress, details);
         }
+    }
+
+    /**
+     * Generate a Zone-Wise Outlier Report for JDA leadership.
+     * Analyzes all tickets grouped by zone, detects Analytical vs Behavioral outliers.
+     * Behavioral outliers = employees requesting already-submitted documents (fraud signal).
+     */
+    public async generateZoneOutlierReport(
+        projectId: string,
+        workflowSteps: any[],
+        provider: AIProvider = 'ollama',
+        apiKey?: string
+    ): Promise<ZoneOutlierReport> {
+        const aiService = this.aiFactory.getService(provider, apiKey);
+
+        // Group steps by ticket
+        const ticketMap = new Map<string, any[]>();
+        for (const step of workflowSteps) {
+            if (step.ticketId) {
+                if (!ticketMap.has(step.ticketId)) ticketMap.set(step.ticketId, []);
+                ticketMap.get(step.ticketId)!.push(step);
+            }
+        }
+
+        const ticketReports: ZoneOutlierTicketReport[] = [];
+
+        const BATCH_SIZE = 2;
+        const ticketEntries = Array.from(ticketMap.entries());
+
+        console.log(`\n🗺️  ZONE OUTLIER REPORT — Analyzing ${ticketEntries.length} tickets`);
+
+        for (let i = 0; i < ticketEntries.length; i += BATCH_SIZE) {
+            const batch = ticketEntries.slice(i, i + BATCH_SIZE);
+            await Promise.all(batch.map(async ([ticketId, steps]) => {
+                try {
+                    const lastStep = steps[steps.length - 1];
+                    const zone = lastStep?.rawRow?.['ZoneName'] || lastStep?.zoneId || 'Unknown Zone';
+                    const flowType = lastStep?.serviceName || 'Unknown Service';
+                    const employeeName = lastStep?.employeeName || 'Unknown Employee';
+
+                    // Calculate total delay
+                    const appDateStep = steps.find((s: any) => s.rawRow?.['ApplicationDate'] && s.rawRow['ApplicationDate'] !== 'NULL');
+                    const delDateStep = steps.find((s: any) => s.rawRow?.['DeliverdOn'] && s.rawRow['DeliverdOn'] !== 'NULL');
+                    let totalDelay = 0;
+                    if (appDateStep?.rawRow?.['ApplicationDate'] && delDateStep?.rawRow?.['DeliverdOn']) {
+                        try {
+                            const [am, ad, ay] = appDateStep.rawRow['ApplicationDate'].split('/').map(Number);
+                            const [dm, dd, dy] = delDateStep.rawRow['DeliverdOn'].split('/').map(Number);
+                            totalDelay = Math.floor((new Date(dy, dm - 1, dd).getTime() - new Date(ay, am - 1, ad).getTime()) / 86400000);
+                        } catch { }
+                    }
+
+                    // Reconstruct conversation
+                    const conversationHistory = steps.map((step: any) => {
+                        const rf = (step.lifetimeRemarksFrom || '').trim();
+                        const rm = (step.lifetimeRemarks || '').trim();
+                        const date = step.rawRow?.['MaxEventTimeStamp'] || 'Unknown Date';
+                        return `[${date}] lifetimeRemarksFrom: "${rf.replace(/"/g, "'")}" | lifetimeRemarks: "${rm.replace(/"/g, "'")}"`;
+                    }).join('\n');
+
+                    // Hybrid doc extraction (already used for forensic reports)
+                    const docResult = await this.hybridDocumentExtraction(conversationHistory, ticketId, aiService);
+                    const submittedDocs = docResult.submissionConfirmed && docResult.documents.length > 0
+                        ? docResult.documents.join(', ')
+                        : docResult.submissionConfirmed ? 'Applicant confirmed submission (specific docs unclear)' : 'None confirmed';
+                    const requestedDocs = docResult.documents.length > 0
+                        ? docResult.documents.join(', ')
+                        : 'None identified';
+
+                    // Generate outlier report with the leadership prompt
+                    const prompt = createZoneOutlierReportPrompt({
+                        ticketId,
+                        zone,
+                        flowType,
+                        totalDelay,
+                        employeeName,
+                        conversationHistory,
+                        submittedDocuments: submittedDocs,
+                        requestedDocuments: requestedDocs
+                    });
+
+                    const response = await aiService.generate(prompt, { format: 'json', temperature: 0.1 });
+                    const parsed = this.cleanAndParseJSON(response.content);
+
+                    if (parsed?.outlierReport) {
+                        const rpt = parsed.outlierReport;
+
+                        // Strict stringification helper for arrays
+                        const ensureStringArray = (arr: any): string[] => {
+                            if (!Array.isArray(arr)) return [];
+                            return arr.map(item => {
+                                if (typeof item === 'string') return item;
+                                if (item === null || item === undefined) return '';
+                                // If it's an object with a single value (like { action: "foo" } or { document: "bar" }), extract the value
+                                if (typeof item === 'object') {
+                                    const vals = Object.values(item);
+                                    if (vals.length > 0 && typeof vals[0] === 'string') return vals[0] as string;
+                                    try { return JSON.stringify(item); } catch { return String(item); }
+                                }
+                                return String(item);
+                            }).filter(s => s.length > 0);
+                        };
+
+                        ticketReports.push({
+                            ticketId,
+                            zone,
+                            primaryCategory: rpt.primaryCategory === 'Behavioral Outlier' ? 'Behavioral Outlier' : 'Analytical Outlier',
+                            severity: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(rpt.severity) ? rpt.severity : 'MEDIUM',
+                            confidence: typeof rpt.confidence === 'number' ? rpt.confidence : 0.5,
+                            outlierSummary: typeof rpt.outlierSummary === 'string' ? rpt.outlierSummary : 'No summary available',
+                            rootCause: typeof rpt.rootCause === 'string' ? rpt.rootCause : 'Unknown',
+                            impactStatement: typeof rpt.impactStatement === 'string' ? rpt.impactStatement : 'Unknown impact',
+                            documentCrossCheck: {
+                                falsyRequestedAfterSubmission: ensureStringArray(rpt.documentCrossCheck?.falsyRequestedAfterSubmission),
+                                genuinelyMissing: ensureStringArray(rpt.documentCrossCheck?.genuinelyMissing),
+                                crossCheckSummary: typeof rpt.documentCrossCheck?.crossCheckSummary === 'string' ? rpt.documentCrossCheck.crossCheckSummary : ''
+                            },
+                            keyEvidence: ensureStringArray(rpt.keyEvidence),
+                            recommendations: ensureStringArray(rpt.recommendations),
+                            employeeSignalFlags: Array.isArray(rpt.employeeSignalFlags) ? rpt.employeeSignalFlags.filter((f: any) => typeof f === 'object' && f.flag) : []
+                        });
+                        console.log(`  ✅ [ZoneOutlier] Ticket ${ticketId} → ${rpt.primaryCategory} | Severity: ${rpt.severity}`);
+                    }
+                } catch (err) {
+                    console.error(`  ⚠️ [ZoneOutlier] Failed for ticket ${ticketId}`, err);
+                }
+            }));
+        }
+
+        // Build zone summary
+        const zoneMap = new Map<string, { analytical: number; behavioral: number; critical: number; tickets: ZoneOutlierTicketReport[] }>();
+        for (const rpt of ticketReports) {
+            if (!zoneMap.has(rpt.zone)) zoneMap.set(rpt.zone, { analytical: 0, behavioral: 0, critical: 0, tickets: [] });
+            const zm = zoneMap.get(rpt.zone)!;
+            zm.tickets.push(rpt);
+            if (rpt.primaryCategory === 'Analytical Outlier') zm.analytical++;
+            else zm.behavioral++;
+            if (rpt.severity === 'CRITICAL') zm.critical++;
+        }
+
+        const zoneSummary = Array.from(zoneMap.entries()).map(([zone, data]) => {
+            // Pick top recommendation from highest severity ticket
+            const topTicket = data.tickets.sort((a, b) => ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].indexOf(b.severity) - ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].indexOf(a.severity))[0];
+            return {
+                zone,
+                totalTickets: data.tickets.length,
+                analyticalOutliers: data.analytical,
+                behavioralOutliers: data.behavioral,
+                criticalCount: data.critical,
+                topRecommendation: topTicket?.recommendations?.[0] || 'No critical recommendation'
+            };
+        });
+
+        // Executive summary
+        const totalBehavioral = ticketReports.filter(r => r.primaryCategory === 'Behavioral Outlier').length;
+        const totalAnalytical = ticketReports.filter(r => r.primaryCategory === 'Analytical Outlier').length;
+        const totalCritical = ticketReports.filter(r => r.severity === 'CRITICAL').length;
+        const executiveSummary = `Zone Outlier Analysis covering ${ticketReports.length} tickets across ${zoneMap.size} zones. ` +
+            `Detected ${totalBehavioral} Behavioral Outlier(s) (potential employee misconduct) and ${totalAnalytical} Analytical Outlier(s) (process/documentation gaps). ` +
+            `${totalCritical} ticket(s) are flagged as CRITICAL risk and require immediate leadership attention.`;
+
+        console.log(`\n🗺️  ZONE OUTLIER REPORT COMPLETE — ${ticketReports.length} tickets | ${totalBehavioral} Behavioral | ${totalAnalytical} Analytical | ${totalCritical} Critical`);
+
+        return {
+            projectId,
+            generatedAt: new Date().toISOString(),
+            zoneSummary,
+            ticketReports,
+            executiveSummary
+        };
     }
 
     /**
@@ -434,14 +607,53 @@ export class AIAnalysisService {
             console.log(`HISTORY PREVIEW: ${conversationHistory.substring(0, 200)}...`);
         }
 
+        // ─── HYBRID DOCUMENT EXTRACTION (EVIDENCE-QUOTE) ─────────────────────
+        const docExtractionResult = await this.hybridDocumentExtraction(conversationHistory, String(ticket.id), aiService);
+        const docsExtractedStr = docExtractionResult.documents.length > 0 ? `[${docExtractionResult.documents.join(', ')}]` : '[] (None)';
+
+        // ─── CATEGORY CLASSIFICATION ──────────────────────────────────────────
+        const { createCategoryClassificationPrompt } = await import('../config/promptBuilders.js');
+        const categoryPrompt = createCategoryClassificationPrompt({
+            ticketId: String(ticket.id),
+            flowType: ticket.service || 'Unknown',
+            conversationHistory: conversationHistory,
+            documentsExtracted: docsExtractedStr
+        });
+
+        let primaryCategory = "Unknown";
+        let categoryConfidence = 0;
+        let categoryReasoning = "No reasoning provided";
+        let categoryFactors: string[] = [];
+        let categoryBreakdown = "No breakdown provided";
+
+        try {
+            const catResponse = await aiService.generate(categoryPrompt, {
+                temperature: 0.1,
+                format: 'json'
+            });
+
+            const catParsed = this.cleanAndParseJSON(catResponse.content);
+            if (catParsed?.categoryClassification) {
+                const cc = catParsed.categoryClassification;
+                primaryCategory = cc.primaryCategory || primaryCategory;
+                categoryConfidence = cc.confidence || categoryConfidence;
+                categoryReasoning = cc.reasoning || categoryReasoning;
+                categoryFactors = Array.isArray(cc.contributingFactors) ? cc.contributingFactors : categoryFactors;
+                categoryBreakdown = cc.delayBreakdown || cc.reasoning || categoryBreakdown;
+                console.log(`  📌 [Category Classification] Ticket ${ticket.id} -> ${primaryCategory} (Conf: ${categoryConfidence})`);
+            }
+        } catch (catErr) {
+            console.error(`  ⚠️ [Category Classification] AI Service failed for ticket ${ticket.id}`, catErr);
+        }
+        // ─── END CATEGORY CLASSIFICATION ──────────────────────────────────────
+
+        // ─── EMPLOYEE REMARK ANALYSIS ─────────────────────────────────────────
         const prompt = createRemarkAnalysisPrompt({
             ticketId: ticket.id,
             flowType: ticket.service,
-            flowTypeParent: ticket.parentService,
             conversationHistory: conversationHistory,
-            totalDelay: ticket.delay,
-            employeeName: ticket.lastActionBy || 'Unknown',
-            stage: ticket.stage
+            categoryIdentified: primaryCategory,
+            documentsExtracted: docsExtractedStr
         });
 
         // Add explicit file logging for user diagnostics
@@ -494,7 +706,7 @@ Output only data grounded in the ACTUAL conversationHistory provided.`,
             if (parsed) {
                 // Ensure all REQUIRED fields for the new ForensicAnalysis interface are present
                 const compliant: ForensicAnalysis = {
-                    overallRemarkAnalysis: parsed.overallRemarkAnalysis || {
+                    overallRemarkAnalysis: {
                         employeeRemarksOverall: {
                             totalEmployeeRemarks: 0,
                             summary: "Not analyzed",
@@ -509,42 +721,80 @@ Output only data grounded in the ACTUAL conversationHistory provided.`,
                             summary: "Not analyzed",
                             commonThemes: [],
                             complianceLevel: "Unknown",
-                            sentimentTrend: "Neutral",
+                            sentimentSummary: "Neutral",
                             delayPatterns: [],
                             topApplicantConcerns: []
                         }
                     },
-                    employeeRemarkAnalysis: parsed.employeeRemarkAnalysis || {
-                        summary: "Analysis unavailable",
-                        totalEmployeeRemarks: 0,
-                        keyActions: [],
-                        responseTimeliness: "Unknown",
-                        communicationClarity: "Unknown",
-                        inactionFlags: []
+                    employeeRemarkAnalysis: {
+                        summary: parsed.remarkAnalysis?.employeeAnalysis?.summary ||
+                            parsed.employeeAnalysis?.summary ||
+                            "No employee analysis generated.",
+                        totalEmployeeRemarks: parsed.remarkAnalysis?.employeeAnalysis?.totalEmployeeRemarks ||
+                            parsed.employeeAnalysis?.totalEmployeeRemarks || 0,
+                        keyActions: parsed.remarkAnalysis?.employeeAnalysis?.keyActions ||
+                            parsed.employeeAnalysis?.keyActions || [],
+                        responseTimeliness: parsed.remarkAnalysis?.employeeAnalysis?.responseTimeliness ||
+                            parsed.employeeAnalysis?.responseTimeliness || "Unknown",
+                        communicationClarity: parsed.remarkAnalysis?.employeeAnalysis?.communicationQuality ||
+                            parsed.employeeAnalysis?.communicationQuality || "Medium",
+                        inactionFlags: parsed.remarkAnalysis?.employeeAnalysis?.inactionFlags ||
+                            parsed.employeeAnalysis?.inactionFlags || []
                     },
-                    applicantRemarkAnalysis: parsed.applicantRemarkAnalysis || {
-                        summary: "Analysis unavailable",
-                        totalApplicantRemarks: 0,
-                        keyActions: [],
-                        responseTimeliness: "Unknown",
-                        sentimentTrend: "Neutral",
-                        complianceLevel: "Unknown"
+                    applicantRemarkAnalysis: {
+                        summary: parsed.remarkAnalysis?.applicantAnalysis?.summary ||
+                            parsed.applicantAnalysis?.summary ||
+                            "No applicant analysis generated.",
+                        totalApplicantRemarks: parsed.remarkAnalysis?.applicantAnalysis?.totalApplicantRemarks ||
+                            parsed.applicantAnalysis?.totalApplicantRemarks || 0,
+                        keyActions: parsed.remarkAnalysis?.applicantAnalysis?.keyActions ||
+                            parsed.applicantAnalysis?.keyActions || [],
+                        responseTimeliness: parsed.remarkAnalysis?.applicantAnalysis?.responseTimeliness ||
+                            parsed.applicantAnalysis?.responseTimeliness || "Unknown",
+                        sentimentSummary: parsed.remarkAnalysis?.applicantAnalysis?.sentimentSummary ||
+                            parsed.applicantAnalysis?.sentimentSummary ||
+                            parsed.remarkAnalysis?.applicantAnalysis?.sentimentTrend || // Fallback for old models
+                            parsed.applicantAnalysis?.sentimentTrend || "Neutral",
+                        complianceLevel: parsed.remarkAnalysis?.applicantAnalysis?.complianceLevel ||
+                            parsed.applicantAnalysis?.complianceLevel || "Unknown",
+                        complianceReason: parsed.remarkAnalysis?.applicantAnalysis?.complianceReason ||
+                            parsed.applicantAnalysis?.complianceReason,
+                        painPoints: parsed.remarkAnalysis?.applicantAnalysis?.painPoints ||
+                            parsed.applicantAnalysis?.painPoints || []
                     },
                     delayAnalysis: {
-                        primaryDelayCategory: parsed.delayAnalysis?.primaryDelayCategory || "Unknown",
-                        primaryCategoryConfidence: parsed.delayAnalysis?.primaryCategoryConfidence || 0,
-                        documentClarityAnalysis: parsed.delayAnalysis?.documentClarityAnalysis || {
-                            documentClarityProvided: false,
-                            documentNames: [],
+                        primaryDelayCategory: primaryCategory,
+                        primaryCategoryConfidence: categoryConfidence,
+                        documentClarityAnalysis: {
+                            documentClarityProvided: docExtractionResult.documents.length > 0,
+                            documentNames: docExtractionResult.documents,
+                            documentDetails: docExtractionResult.documentDetails
                         },
-                        categorySummary: parsed.delayAnalysis?.categorySummary || "No specific delay summary.",
-                        allApplicableCategories: parsed.delayAnalysis?.allApplicableCategories || [],
-                        processGaps: parsed.delayAnalysis?.processGaps || [],
-                        painPoints: parsed.delayAnalysis?.painPoints || [],
-                        forcefulDelays: parsed.delayAnalysis?.forcefulDelays || []
+                        categorySummary: categoryBreakdown,
+                        allApplicableCategories: [],
+                        processGaps: Array.isArray(parsed.employeeAnalysis?.bottlenecks)
+                            ? parsed.employeeAnalysis.bottlenecks.map((b: any) => typeof b === 'string' ? b : (b.bottleneck || JSON.stringify(b)))
+                            : [], // Store bottlenecks as processGaps
+                        painPoints: [],
+                        forcefulDelays: [],
+                        categoryClassification: {
+                            primaryCategory: primaryCategory,
+                            confidence: categoryConfidence,
+                            reasoning: categoryReasoning,
+                            contributingFactors: categoryFactors,
+                            delayBreakdown: categoryBreakdown
+                        }
                     },
-                    sentimentSummary: parsed.sentimentSummary || "Unknown",
-                    ticketInsightSummary: parsed.ticketInsightSummary || "No specific insights."
+                    sentimentSummary: parsed.remarkAnalysis?.applicantAnalysis?.sentimentSummary ||
+                        parsed.applicantAnalysis?.sentimentSummary ||
+                        parsed.remarkAnalysis?.applicantAnalysis?.sentimentTrend ||
+                        parsed.applicantAnalysis?.sentimentTrend ||
+                        parsed.sentimentSummary ||
+                        "Neutral",
+                    ticketInsightSummary: parsed.remarkAnalysis?.overallTicketInsight?.summary ||
+                        parsed.overallTicketInsight?.summary ||
+                        parsed.ticketInsightSummary ||
+                        "No specific insights."
                 };
 
                 console.log(`✅ Forensic analysis parsed and validated for ticket ${ticket.id}`);
@@ -644,6 +894,36 @@ Output only data grounded in the ACTUAL conversationHistory provided.`,
             }).join('\n');
         }
 
+        // ─── HYBRID DOCUMENT EXTRACTION (EVIDENCE-QUOTE) ─────────────────────
+        const docExtractionResult = await this.hybridDocumentExtraction(formattedHistory, 'PLAYGROUND-DEMO', aiService);
+        const docsExtractedStr = docExtractionResult.documents.length > 0 ? `[${docExtractionResult.documents.join(', ')}]` : '[] (None)';
+
+        // ─── CATEGORY CLASSIFICATION ──────────────────────────────────────────
+        const { createCategoryClassificationPrompt } = await import('../config/promptBuilders.js');
+        const categoryPrompt = createCategoryClassificationPrompt({
+            ticketId: 'PLAYGROUND-DEMO',
+            flowType: 'Generic Request',
+            conversationHistory: formattedHistory,
+            documentsExtracted: docsExtractedStr
+        });
+
+        let primaryCategory = "Unknown";
+        let categoryConfidence = 0;
+        let categoryReasoning = "No reasoning provided";
+
+        try {
+            const catResponse = await aiService.generate(categoryPrompt, { temperature: 0.1, format: 'json' });
+            const catParsed = this.cleanAndParseJSON(catResponse.content);
+            if (catParsed?.categoryClassification) {
+                const cc = catParsed.categoryClassification;
+                primaryCategory = cc.primaryCategory || primaryCategory;
+                categoryConfidence = cc.confidence || categoryConfidence;
+                categoryReasoning = cc.reasoning || categoryReasoning;
+            }
+        } catch (e) {
+            console.error("Playground category classification failed", e);
+        }
+
         // Use the centralized prompt template
         const { REMARK_ANALYSIS_USER_PROMPT } = await import('../prompts/templates.js');
         const { interpolate } = await import('../utils/promptUtils.js');
@@ -651,14 +931,12 @@ Output only data grounded in the ACTUAL conversationHistory provided.`,
         const promptContext = {
             ticketId: 'PLAYGROUND-DEMO',
             flowType: 'Generic Request',
-            flowTypeParent: 'General',
-            stage: 'Forensic Review',
-            totalDelay: '0', // Playground default
-            conversationHistory: formattedHistory
+            conversationHistory: formattedHistory,
+            categoryIdentified: primaryCategory,
+            documentsExtracted: docsExtractedStr
         };
 
         const advancedPrompt = interpolate(REMARK_ANALYSIS_USER_PROMPT, promptContext);
-
 
         try {
             const response = await aiService.generate(advancedPrompt, {
@@ -684,9 +962,8 @@ Output only data grounded in the ACTUAL conversationHistory provided.`,
             const parsed = this.cleanAndParseJSON(response.content);
 
             // Verify if analysis is meaningful (not empty)
-            const isAnalysisEmpty = !parsed || (
-                (parsed.employeeRemarkAnalysis?.summary === "" || parsed.employeeRemarkAnalysis?.totalEmployeeRemarks === 0) &&
-                (parsed.applicantRemarkAnalysis?.summary === "" || parsed.applicantRemarkAnalysis?.totalApplicantRemarks === 0)
+            const isAnalysisEmpty = !parsed?.employeeAnalysis || (
+                (parsed.employeeAnalysis?.summary === "" || parsed.employeeAnalysis?.totalEmployeeRemarks === 0)
             );
 
             if (isAnalysisEmpty) {
@@ -728,7 +1005,7 @@ OUTPUT JSON ONLY:
                                 summary: fallbackParsed.applicantActions || "No applicant actions",
                                 commonThemes: [],
                                 complianceLevel: "Unknown",
-                                sentimentTrend: fallbackParsed.sentiment || "Neutral",
+                                sentimentSummary: fallbackParsed.sentiment || "Neutral",
                                 delayPatterns: [],
                                 topApplicantConcerns: []
                             }
@@ -745,22 +1022,30 @@ OUTPUT JSON ONLY:
                             summary: fallbackParsed.applicantActions || "No applicant actions detected",
                             totalApplicantRemarks: 1,
                             keyActions: [],
-                            sentimentTrend: fallbackParsed.sentiment || "Neutral",
+                            sentimentSummary: fallbackParsed.sentiment || "Neutral",
                             complianceLevel: "Unknown",
                             responseTimeliness: "Unknown"
                         },
                         delayAnalysis: {
-                            primaryDelayCategory: fallbackParsed.delayReason || "Unknown",
-                            primaryCategoryConfidence: 0.7,
+                            primaryDelayCategory: fallbackParsed.delayReason || primaryCategory,
+                            primaryCategoryConfidence: categoryConfidence,
                             documentClarityAnalysis: {
-                                documentClarityProvided: false,
-                                documentNames: []
+                                documentClarityProvided: docExtractionResult.documents.length > 0,
+                                documentNames: docExtractionResult.documents,
+                                documentDetails: docExtractionResult.documentDetails
                             },
                             categorySummary: `Identified delay reason: ${fallbackParsed.delayReason}`,
                             allApplicableCategories: [],
                             processGaps: [],
                             painPoints: [],
-                            forcefulDelays: []
+                            forcefulDelays: [],
+                            categoryClassification: {
+                                primaryCategory: fallbackParsed.delayReason || primaryCategory,
+                                confidence: categoryConfidence,
+                                reasoning: categoryReasoning,
+                                contributingFactors: [],
+                                delayBreakdown: categoryReasoning
+                            }
                         },
                         sentimentSummary: fallbackParsed.sentiment || "Neutral",
                         ticketInsightSummary: `Fallback analysis: ${fallbackParsed.delayReason}`
@@ -771,7 +1056,7 @@ OUTPUT JSON ONLY:
             if (parsed) {
                 // Ensure all REQUIRED fields for the new ForensicAnalysis interface are present
                 const compliant: ForensicAnalysis = {
-                    overallRemarkAnalysis: parsed.overallRemarkAnalysis || {
+                    overallRemarkAnalysis: {
                         employeeRemarksOverall: {
                             totalEmployeeRemarks: 0,
                             summary: "Not analyzed",
@@ -786,39 +1071,47 @@ OUTPUT JSON ONLY:
                             summary: "Not analyzed",
                             commonThemes: [],
                             complianceLevel: "Unknown",
-                            sentimentTrend: "Neutral",
+                            sentimentSummary: "Neutral",
                             delayPatterns: [],
                             topApplicantConcerns: []
                         }
                     },
-                    employeeRemarkAnalysis: parsed.employeeRemarkAnalysis || {
-                        summary: "Analysis unavailable",
-                        totalEmployeeRemarks: 0,
-                        keyActions: [],
-                        responseTimeliness: "Unknown",
-                        communicationClarity: "Unknown",
-                        inactionFlags: []
+                    employeeRemarkAnalysis: {
+                        summary: parsed.employeeAnalysis?.summary || "Analysis unavailable",
+                        totalEmployeeRemarks: parsed.employeeAnalysis?.totalEmployeeRemarks || 0,
+                        keyActions: parsed.employeeAnalysis?.keyActions || [],
+                        responseTimeliness: parsed.employeeAnalysis?.responseTimeliness || "Unknown",
+                        communicationClarity: parsed.employeeAnalysis?.communicationQuality || "Unknown",
+                        inactionFlags: parsed.employeeAnalysis?.inactionFlags || []
                     },
-                    applicantRemarkAnalysis: parsed.applicantRemarkAnalysis || {
-                        summary: "Analysis unavailable",
+                    applicantRemarkAnalysis: {
+                        summary: "Analysis unavailable (Refactored to focus on Employee actions)",
                         totalApplicantRemarks: 0,
                         keyActions: [],
                         responseTimeliness: "Unknown",
-                        sentimentTrend: "Neutral",
+                        sentimentSummary: "Neutral",
                         complianceLevel: "Unknown"
                     },
                     delayAnalysis: {
-                        primaryDelayCategory: parsed.delayAnalysis?.primaryDelayCategory || "Unknown",
-                        primaryCategoryConfidence: parsed.delayAnalysis?.primaryCategoryConfidence || 0,
-                        documentClarityAnalysis: parsed.delayAnalysis?.documentClarityAnalysis || {
-                            documentClarityProvided: false,
-                            documentNames: [],
+                        primaryDelayCategory: primaryCategory,
+                        primaryCategoryConfidence: categoryConfidence,
+                        documentClarityAnalysis: {
+                            documentClarityProvided: docExtractionResult.documents.length > 0,
+                            documentNames: docExtractionResult.documents,
+                            documentDetails: docExtractionResult.documentDetails
                         },
-                        categorySummary: parsed.delayAnalysis?.categorySummary || "No specific delay summary.",
-                        allApplicableCategories: parsed.delayAnalysis?.allApplicableCategories || [],
-                        processGaps: parsed.delayAnalysis?.processGaps || [],
-                        painPoints: parsed.delayAnalysis?.painPoints || [],
-                        forcefulDelays: parsed.delayAnalysis?.forcefulDelays || []
+                        categorySummary: categoryReasoning,
+                        allApplicableCategories: [],
+                        processGaps: parsed.employeeAnalysis?.bottlenecks || [],
+                        painPoints: [],
+                        forcefulDelays: [],
+                        categoryClassification: {
+                            primaryCategory: primaryCategory,
+                            confidence: categoryConfidence,
+                            reasoning: categoryReasoning,
+                            contributingFactors: [],
+                            delayBreakdown: categoryReasoning
+                        }
                     },
                     sentimentSummary: parsed.sentimentSummary || "Unknown",
                     ticketInsightSummary: parsed.ticketInsightSummary || "No specific insights."
@@ -1017,7 +1310,9 @@ OUTPUT JSON ONLY:
                 return match ? match[1] : null;
             };
 
-            reconstructed.sentimentSummary = getFlatField(clean, 'sentimentSummary');
+            reconstructed.sentimentTrend = getFlatField(clean, 'sentimentTrend');
+            reconstructed.sentimentTrendDetails = getFlatField(clean, 'sentimentTrendDetails');
+            reconstructed.sentimentSummary = getFlatField(clean, 'sentimentSummary') || reconstructed.sentimentTrend;
             reconstructed.ticketInsightSummary = getFlatField(clean, 'ticketInsightSummary');
             reconstructed.category = getFlatField(clean, 'category');
             reconstructed.englishSummary = getFlatField(clean, 'englishSummary');
@@ -1057,5 +1352,186 @@ OUTPUT JSON ONLY:
 
         const match = response.match(regex);
         return match ? match[1].trim() : "";
+    }
+
+    /**
+     * Hybrid Document Extraction (Evidence-Quote Based)
+     * Replaces the naive keyword scanner to prevent extracting false positives (e.g. "applicant asked about aadhar").
+     * Uses Prompt Chaining and deterministic Quote Verification.
+     */
+    private async hybridDocumentExtraction(
+        conversationHistory: string,
+        ticketId: string,
+        aiService: AIService
+    ): Promise<{ documents: string[]; documentDetails: Array<{ name: string; exactMatch: string; quote: string }>; submissionConfirmed: boolean }> {
+        // ─── Deterministic code scanner ───
+        const DOC_SCAN_MAP = [
+            { name: 'Pan Card', aliases: ['pan card', 'pancard', 'पैन कार्ड'], wordAliases: ['pan'] },
+            { name: 'Aadhar Card', aliases: ['aadhar card', 'aadhar', 'adhar card', 'adhar', 'aadhaar', 'aadhaar card', 'आधार कार्ड', 'आधार'] },
+            { name: 'Passport', aliases: ['passport', 'पासपोर्ट'] },
+            { name: 'Voter ID', aliases: ['voter id', 'voter card', 'वोटर कार्ड', 'voter i/d'] },
+            { name: 'Ration Card', aliases: ['ration card', 'राशन कार्ड'] },
+            { name: 'Site Plan', aliases: ['site plan', 'साइट प्लान', 'site map'] },
+            { name: 'Sale Deed', aliases: ['sale deed', 'विक्रय पत्र', 'sale-deed'] },
+            { name: 'Lease Deed', aliases: ['lease deed', 'leasedeed', 'patta', 'e-patta', 'ई-पट्टा', 'लीजडीड', 'पट्टा'] },
+            { name: 'License Deed', aliases: ['license deed', 'licence deed', 'लाईसेन्स डीड'] },
+            { name: 'Affidavit', aliases: ['affidavit', 'शपथ पत्र'] },
+            { name: 'Death Certificate', aliases: ['death certificate', 'मृत्यु प्रमाण पत्र'] },
+            { name: 'Marriage Certificate', aliases: ['marriage certificate', 'विवाह प्रमाण पत्र'] },
+            { name: 'Birth Certificate', aliases: ['birth certificate', 'जन्म प्रमाण पत्र'] },
+            { name: 'Challan', aliases: ['challan', 'चालान'] },
+            { name: 'Demand Note', aliases: ['demand note', 'demand-note', 'डिमांड नोट', 'मांग पत्र'] },
+            { name: 'Bank NOC', aliases: ['bank noc', 'bank n.o.c', 'बैंक एनओसी'] },
+            { name: 'Income Certificate', aliases: ['income certificate', 'आय प्रमाण पत्र'] },
+            { name: 'Electricity Bill', aliases: ['electricity bill', 'electric bill', 'light bill', 'bijli bill', 'बिजली बिल', 'बिजली का बिल'] },
+            { name: 'Water Bill', aliases: ['water bill', 'paani bill', 'पानी बिल', 'पानी का बिल'] },
+        ];
+
+        const lower = conversationHistory.toLowerCase();
+        const codeScanned = DOC_SCAN_MAP.filter(doc => {
+            if (doc.name === 'Aadhar Card') {
+                // Determine if we should ignore context for Aadhar
+                // For 'आधार' we want to avoid picking up 'के आधार पर' or 'आधार पर'
+                // We'll replace these false positive phrases before checking for aadhar
+                const sanitizedForAadhar = lower.replace(/के\s*आधार\s*पर/g, '').replace(/आधार\s*पर/g, '');
+                if (doc.aliases.some(a => sanitizedForAadhar.includes(a.toLowerCase()))) return true;
+                if (doc.wordAliases) {
+                    return doc.wordAliases.some(a => new RegExp(`\\b${a}\\b`, 'i').test(sanitizedForAadhar));
+                }
+                return false;
+            }
+
+            if (doc.aliases.some(a => lower.includes(a.toLowerCase()))) return true;
+            if (doc.wordAliases) {
+                return doc.wordAliases.some(a => new RegExp(`\\b${a}\\b`, 'i').test(lower));
+            }
+            return false;
+        }).map(doc => doc.name);
+
+        // ─── AI Chain Call ───
+        const extractionPrompt = createDocumentExtractionPrompt({
+            ticketId: ticketId,
+            flowType: 'Document Extraction',
+            conversationHistory: conversationHistory
+        });
+
+        let aiResultStr: string;
+        try {
+            const response = await aiService.generate(extractionPrompt);
+            aiResultStr = response.content;
+        } catch (e) {
+            console.error(`  ⚠️ [Doc Extraction] AI Service failed for ${ticketId}. Falling back to scanner.`);
+            return { documents: codeScanned, documentDetails: [], submissionConfirmed: false };
+        }
+
+        // Parse JSON output
+        let aiResult: any = null;
+        try {
+            const start = aiResultStr.indexOf('{');
+            const end = aiResultStr.lastIndexOf('}');
+            if (start !== -1 && end !== -1) {
+                aiResult = JSON.parse(aiResultStr.slice(start, end + 1));
+            }
+        } catch (e) {
+            console.warn(`  ⚠️ [Doc Extraction] Failed to parse JSON for ${ticketId}. Falling back.`);
+            return { documents: codeScanned, documentDetails: [], submissionConfirmed: false };
+        }
+
+        if (!aiResult) return { documents: codeScanned, documentDetails: [], submissionConfirmed: false };
+
+        // ─── Quote Verifier ───
+        const foundList = Array.isArray(aiResult.found) ? aiResult.found : [];
+        const verified: string[] = [];
+        const documentDetails: Array<{ name: string; exactMatch: string; quote: string }> = [];
+
+        // Fuzzy match: Needs ~50% of the quote's words to exist in text
+        const verifyQuote = (quote: string, text: string) => {
+            if (!quote || quote.length < 5) return false;
+
+            // Extract meaningful words (length > 2)
+            const quoteWords = quote.toLowerCase()
+                .replace(/[^a-z0-9\u0900-\u097F\s]/g, ' ')
+                .split(/\s+/)
+                .filter(w => w.length > 2);
+
+            if (quoteWords.length === 0) return true; // If quote only had small words, don't fail it purely on that
+
+            const txtLower = text.toLowerCase().replace(/[^a-z0-9\u0900-\u097F\s]/g, ' ');
+            let matchCount = 0;
+            for (const w of quoteWords) {
+                // simple word boundary match in the sanitized text
+                if (txtLower.includes(` ${w} `) || txtLower.startsWith(`${w} `) || txtLower.endsWith(` ${w}`) || txtLower === w) {
+                    matchCount++;
+                } else if (txtLower.includes(w)) {
+                    // fallback to substring if word boundary fails
+                    matchCount += 0.5;
+                }
+            }
+
+            // AI often drops/changes 1-2 words. 40% match of significant words is a safe threshold for a "quote"
+            return (matchCount / quoteWords.length) >= 0.4;
+        };
+
+        for (const item of foundList) {
+            if (!item.document || !item.quote) continue;
+            if (verifyQuote(item.quote, conversationHistory)) {
+                verified.push(item.document);
+                documentDetails.push({
+                    name: item.document,
+                    exactMatch: item.exactMatch || item.document, // Fallback if AI didn't return it
+                    quote: item.quote
+                });
+            }
+        }
+
+        // ─── Final Output Logic ───
+        const finalUnion = [...new Set([...verified, ...codeScanned])];
+
+        // Add minimal details for documents found by scanner but missed by AI
+        for (const docName of codeScanned) {
+            if (!verified.includes(docName)) {
+                // Find matching alias to include as exactMatch
+                const docObj = DOC_SCAN_MAP.find(d => d.name === docName);
+                let exactMatch = docName;
+                let quote = "Document identified by system scanner.";
+
+                if (docObj) {
+                    const lowerText = conversationHistory.toLowerCase();
+                    const matchedAlias = docObj.aliases.find(a => lowerText.includes(a.toLowerCase()));
+                    if (matchedAlias) {
+                        exactMatch = matchedAlias;
+                        const matchIdx = lowerText.indexOf(matchedAlias.toLowerCase());
+                        const snippetStart = Math.max(0, matchIdx - 60);
+                        const snippetEnd = Math.min(conversationHistory.length, matchIdx + matchedAlias.length + 60);
+                        quote = "..." + conversationHistory.substring(snippetStart, snippetEnd).replace(/\n/g, ' ').trim() + "...";
+                    } else if (docObj.wordAliases) {
+                        const matchedWord = docObj.wordAliases.find(a => new RegExp(`\\b${a}\\b`, 'i').test(lowerText));
+                        if (matchedWord) {
+                            exactMatch = matchedWord;
+                            const match = lowerText.match(new RegExp(`\\b${matchedWord}\\b`, 'i'));
+                            if (match && match.index !== undefined) {
+                                const snippetStart = Math.max(0, Math.max(0, match.index) - 60);
+                                const snippetEnd = Math.min(conversationHistory.length, (match.index || 0) + matchedWord.length + 60);
+                                quote = "..." + conversationHistory.substring(snippetStart, snippetEnd).replace(/\n/g, ' ').trim() + "...";
+                            }
+                        }
+                    }
+                }
+
+                documentDetails.push({
+                    name: docName,
+                    exactMatch: exactMatch,
+                    quote: quote
+                });
+            }
+        }
+
+        console.log(`📄 [Doc Extraction] Ticket ${ticketId} | Code Scanner: [${codeScanned.join(', ')}] | AI Verified: [${verified.join(', ')}] | Final: [${finalUnion.join(', ')}]`);
+
+        return {
+            documents: finalUnion,
+            documentDetails,
+            submissionConfirmed: !!aiResult.submission_confirmed
+        };
     }
 }

@@ -50,13 +50,13 @@ export class AIFactory {
         switch (provider) {
             case 'ollama':
                 // Ollama doesn't use API keys usually, but we keep signature consistent
-                // const ollamaHost = process.env.OLLAMA_HOST || 'http://localhost:11434';
-                // const ollamaModel = process.env.OLLAMA_MODEL || 'llama3.2:3b';
-                // return new OllamaService({ host: ollamaHost, model: ollamaModel });
-                const geminiKey1 = apiKey || process.env.GEMINI_API_KEY;
-                if (!geminiKey1) throw new Error('GEMINI_API_KEY is not set');
-                const geminiModel1 = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
-                return new GeminiService(geminiKey1, geminiModel1);
+                const ollamaHost = 'http://52.66.67.51:11434/';
+                const ollamaModel = 'llama3:8b';
+                return new OllamaService({ host: ollamaHost, model: ollamaModel });
+            // const geminiKey1 = apiKey || process.env.GEMINI_API_KEY;
+            // if (!geminiKey1) throw new Error('GEMINI_API_KEY is not set');
+            // const geminiModel1 = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
+            // return new GeminiService(geminiKey1, geminiModel1);
 
             case 'openai':
                 const openaiKey = apiKey || process.env.OPENAI_API_KEY;
