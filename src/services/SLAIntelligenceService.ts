@@ -1,6 +1,6 @@
 import { AIAnalysisService } from './AIAnalysisService.js';
 import { ProjectService } from './ProjectService.js';
-import type { ForensicAnalysis } from '../types/index.js';
+import type { ForensicAnalysis, ZoneOutlierReport } from '../types/index.js';
 import { AIFactory, type AIProvider } from './AIFactory.js';
 
 /**
@@ -40,5 +40,18 @@ export class SLAIntelligenceService {
         const aiAnalysisService = new AIAnalysisService();
         const aiService = this.aiFactory.getService(provider, apiKey);
         return aiAnalysisService.analyzeGenericRemarks(text, aiService);
+    }
+
+    /**
+     * Generate Zone-Wise Outlier Report for JDA leadership
+     */
+    async generateZoneOutlierReport(
+        projectId: string,
+        workflowSteps: any[],
+        provider: AIProvider = 'ollama',
+        apiKey?: string
+    ): Promise<ZoneOutlierReport> {
+        const aiAnalysisService = new AIAnalysisService();
+        return aiAnalysisService.generateZoneOutlierReport(projectId, workflowSteps, provider, apiKey);
     }
 }

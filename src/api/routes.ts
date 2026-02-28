@@ -255,6 +255,42 @@ export function createRouter(
         }
     });
 
+    /**
+     * Generate Zone-Wise Outlier Report for JDA leadership
+     * POST /api/v1/project/:id/zone-outlier-report
+     * Body: { aiProvider?: string, apiKey?: string }
+     */
+    router.post('/project/:id/zone-outlier-report', async (req: Request, res: Response) => {
+        try {
+            const projectId = req.params.id;
+            const project = projectService.getProject(projectId);
+
+            if (!project) {
+                return res.status(404).json({ error: 'Project not found' });
+            }
+
+            const aiProvider = (req.body?.aiProvider as any) || 'ollama';
+            const apiKey = req.body?.apiKey;
+
+            console.log(`\n🗺️  Zone Outlier Report requested for project: ${projectId}`);
+
+            const report = await slaService.generateZoneOutlierReport(
+                projectId,
+                project.workflowSteps,
+                aiProvider,
+                apiKey
+            );
+
+            res.json({ success: true, report });
+        } catch (error) {
+            console.error('Zone outlier report error:', error);
+            res.status(500).json({
+                error: 'Failed to generate zone outlier report',
+                details: String(error),
+            });
+        }
+    });
+
     return router;
 }
 

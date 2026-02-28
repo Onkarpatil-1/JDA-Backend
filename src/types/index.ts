@@ -166,7 +166,7 @@ export interface ForensicAnalysis {
             summary: string;
             commonThemes: string[];
             complianceLevel: string;
-            sentimentTrend: string;
+            sentimentSummary: string;
             delayPatterns: string[];
             topApplicantConcerns: string[];
         };
@@ -187,8 +187,10 @@ export interface ForensicAnalysis {
         totalApplicantRemarks: number;
         keyActions: string[];
         responseTimeliness: string;
-        sentimentTrend: string;
+        sentimentSummary: string;
         complianceLevel: string;
+        complianceReason?: string;
+        painPoints?: string[];
     };
     delayAnalysis: {
         primaryDelayCategory: string;
@@ -196,6 +198,7 @@ export interface ForensicAnalysis {
         documentClarityAnalysis: {
             documentClarityProvided: boolean;
             documentNames: string[];
+            documentDetails?: Array<{ name: string; exactMatch: string; quote: string }>;
         };
         categorySummary: string;
         allApplicableCategories: Array<{
@@ -212,6 +215,13 @@ export interface ForensicAnalysis {
             evidence: string;
             recommendation: string;
         }>;
+        categoryClassification?: {
+            primaryCategory: string;
+            confidence: number;
+            reasoning: string;
+            contributingFactors: string[];
+            delayBreakdown: string;
+        };
     };
     sentimentSummary: string;
     ticketInsightSummary: string;
@@ -229,4 +239,45 @@ export interface AIInsights {
     forensicReports?: Record<string, ForensicAnalysis>;
     // New JDA Intelligence Structure
     jdaIntelligence?: JDAIntelligence;
+}
+
+// Outlier Report Types
+export type OutlierCategory = 'Analytical Outlier' | 'Behavioral Outlier';
+
+export interface ZoneOutlierTicketReport {
+    ticketId: string;
+    zone: string;
+    primaryCategory: OutlierCategory;
+    severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+    confidence: number;
+    outlierSummary: string;
+    rootCause: string;
+    impactStatement: string;
+    documentCrossCheck: {
+        falsyRequestedAfterSubmission: string[];
+        genuinelyMissing: string[];
+        crossCheckSummary: string;
+    };
+    keyEvidence: string[];
+    recommendations: string[];
+    employeeSignalFlags: Array<{
+        flag: string;
+        evidence: string;
+        riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+    }>;
+}
+
+export interface ZoneOutlierReport {
+    projectId: string;
+    generatedAt: string;
+    zoneSummary: Array<{
+        zone: string;
+        totalTickets: number;
+        analyticalOutliers: number;
+        behavioralOutliers: number;
+        criticalCount: number;
+        topRecommendation: string;
+    }>;
+    ticketReports: ZoneOutlierTicketReport[];
+    executiveSummary: string;
 }

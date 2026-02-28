@@ -50,9 +50,34 @@ export interface RecommendationsContext {
 export interface RemarkAnalysisContext {
     ticketId: string;
     flowType: string;
-    flowTypeParent: string; // New field for context
     conversationHistory: string;
+    categoryIdentified: string;
+    documentsExtracted: string;
+}
+
+/** Context for document extraction prompt */
+export interface DocumentExtractionContext {
+    ticketId: string;
+    flowType: string;
+    conversationHistory: string;
+}
+
+/** Context for category classification prompt */
+export interface CategoryClassificationContext {
+    ticketId: string;
+    flowType: string;
+    conversationHistory: string;
+    documentsExtracted: string;
+}
+
+/** Context for zone outlier report prompt */
+export interface ZoneOutlierReportContext {
+    ticketId: string;
+    zone: string;
+    flowType: string;
     totalDelay: number;
     employeeName: string;
-    stage: string;
+    conversationHistory: string;
+    submittedDocuments: string; // Comma-separated confirmed submitted docs
+    requestedDocuments: string; // Comma-separated docs the employee requested
 }
