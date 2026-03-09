@@ -70,14 +70,7 @@ export interface CategoryClassificationContext {
     documentsExtracted: string;
 }
 
-/** Context for zone outlier report prompt */
 export interface ZoneOutlierReportContext {
-    ticketId: string;
-    zone: string;
-    flowType: string;
-    totalDelay: number;
-    employeeName: string;
-    conversationHistory: string;
-    submittedDocuments: string; // Comma-separated confirmed submitted docs
-    requestedDocuments: string; // Comma-separated docs the employee requested
+    totalTickets: number;
+    ticketData: string; // JSON string of the array of tickets
 }

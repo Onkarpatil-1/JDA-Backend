@@ -14,7 +14,7 @@ dotenv.config();
 
 const PORT = process.env.PORT || 3001;
 const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://localhost:11434';
-const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3.2:3b';
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3:8b';
 const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';
 const API_PREFIX = process.env.API_PREFIX || '/api/v1';
 
@@ -22,7 +22,7 @@ async function startServer() {
     const app = express();
 
     // Middleware
-    app.use(cors({ origin: CORS_ORIGIN }));
+    app.use(cors({ origin: "*" }));
     app.use(express.json());
 
     // Initialize services

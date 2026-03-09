@@ -124,10 +124,10 @@ Look for these patterns to identify WHO is speaking:
 
 **Employee remarks:**
 - "Notification sent to applicant:"
-- Administrative Hindi text (file processing, approvals, verifications)
-- Phrases like "पत्रावली", "प्रस्तुत है", "अग्रिम कार्यवाही"
-- Technical instructions: "Check and report", "Please report", "Issue demand note"
-- Processing updates: "Site plan signed", "E-Pataa Delivered", "Service document issued"
+- Administrative Hindi text (file processing, approvals, verifications, Rajkaj file movement)
+- Phrases like "पत्रावली", "प्रस्तुत है", "अग्रिम कार्यवाही", "राजकाज", "नोटशीट"
+- Technical instructions: "Check and report", "Please report", "Issue demand note", "Para 9/N", "Pattravali"
+- Processing updates: "Site plan signed", "E-Pataa Delivered", "Service document issued", "Sent to Rajkaj"
 
 **Applicant remarks:**
 - "Reply from Applicant:"
@@ -308,56 +308,39 @@ OUTPUT FORMAT (return ONLY valid JSON):
 {
   "remarkAnalysis": {
     "employeeAnalysis": {
-      "summary": "[150-250 words factual summary of employee actions. See rules below for format.]",
+      "summary": "[150-250 words factual summary of employee actions. See rules below for format. MANDATORY KEY: 'summary']",
       "totalEmployeeRemarks": number,
-      "keyActions": [
-        "Action 1: Description with count/timing if relevant",
-        "Action 2: Description",
-        "Action 3: Description"
-      ],
-      "bottlenecks": [
-        "Bottleneck 1: What blocked employee and duration if known",
-        "Bottleneck 2: What blocked employee"
-      ],
+      "keyActions": [ ... ],
+      "bottlenecks": [ ... ],
       "communicationQuality": "High/Medium/Low",
-      "communicationQualityReason": "1-2 sentences explaining assessment with evidence from remarks",
-      "responseTimeliness": "Prompt/Delayed/Inconsistent/Unknown",
-      "responseTimelinessReason": "1-2 sentences with evidence",
-      "inactionFlags": [
-        {
-          "observation": "Describe TRUE inaction pattern (only if applicant complained/followed up)",
-          "evidence": "Quote or paraphrase actual remark showing applicant complaint or repeated follow-up"
-        }
-      ]
+      "communicationQualityReason": "...",
+      "responseTimeliness": "...",
+      "responseTimelinessReason": "...",
+      "inactionFlags": [ ... ]
     },
 
     "applicantAnalysis": {
-      "summary": "[150-250 words factual summary of applicant actions. See rules below for format.]",
+      "summary": "[150-250 words factual summary of applicant actions. See rules below for format. MANDATORY KEY: 'summary']",
       "totalApplicantRemarks": number,
-      "keyActions": [
-        "Action 1: Description with timing if relevant",
-        "Action 2: Description",
-        "Action 3: Description"
-      ],
-      "painPoints": [
-        "Pain point 1: What caused difficulty for applicant",
-        "Pain point 2: What made experience frustrating"
-      ],
-      "complianceLevel": "Full/Partial/Low/Unknown",
-      "complianceReason": "1-2 sentences explaining compliance with evidence. If applicant confirmed submission, state all documents submitted.",
-      "responseTimeliness": "Prompt/Delayed/Inconsistent/Unknown",
-      "responseTimelinessReason": "1-2 sentences with evidence",
-      "sentimentSummary": "[MANDATORY 3-4 sentences. Describe overall sentiment tone, any shifts, and provide evidence from remarks. See rules below.]"
+      "keyActions": [ ... ],
+      "painPoints": [ ... ],
+      "complianceLevel": "...",
+      "complianceReason": "...",
+      "responseTimeliness": "...",
+      "responseTimelinessReason": "...",
+      "sentimentSummary": "[MANDATORY 3-4 sentences.]"
     },
 
     "overallTicketInsight": {
-      "summary": "[150-250 words factual summary of the overall ticket. See rules below for format.]",
-      "primaryIssue": "One sentence stating main problem that caused delay",
-      "employeePerspective": "One sentence summarizing employee's main bottleneck or challenge",
-      "applicantPerspective": "One sentence summarizing applicant's main experience (pain point or smooth process)"
+      "summary": "[150-250 words factual summary of the overall ticket. MANDATORY KEY: 'summary']",
+      "primaryIssue": "...",
+      "employeePerspective": "...",
+      "applicantPerspective": "..."
     }
   }
 }
+
+IMPORTANT: You MUST use these exact keys: 'employeeAnalysis', 'applicantAnalysis', 'overallTicketInsight', and 'summary'. Any deviation causes system failure.
 
 ---
 
@@ -411,12 +394,12 @@ Applicant summary example (minimal case):
 Overall insight example (minimal case):
 ✓ "Ticket was initiated with employee sending notification to applicant. Applicant acknowledged receipt. Based on {{categoryIdentified}} category and limited conversation, process is in early stage. No significant delays or issues evident from available remarks."
 
-✓ "Applicant maintained neutral and cooperative tone throughout the interaction. No complaints, frustration, or confusion expressed. Communication was straightforward and professional."
+✓ "Applicant maintained a neutral profile with professional responses. Interaction was limited but cooperative without any signs of impatience or dissatisfaction."
 
 **For sentiment summary:**
 - Write 3-4 sentences in [sentimentSummary].
 - NEVER write 'Unknown'.
-- If neutral: "Maintained cooperative tone throughout. No complaints or frustration expressed."
+- If neutral: Describe the lack of friction specifically (e.g., "Responses were purely functional and directed at document submission").
 - Describe any sentiment shifts (e.g., from cooperative to frustrated) with triggers.
 - Provide evidence (e.g., "Applicant used firm language after third reminder").
 
@@ -426,8 +409,8 @@ Overall insight example (minimal case):
 - Assess quality objectively
 - Only flag inaction with evidence of applicant complaint
 
-Example for process-heavy conversation:
-✓ "Employee initiated process by requesting site plan e-signature. Processed application with document verification. Generated demand note for Rs. 22,092. Sent notifications to applicant for challan deposit and e-signature. Verified payment and approved site plan. Completed process by issuing service document. No bottlenecks evident - systematic progression through required steps."
+Example for process-heavy conversation (ONLY use amounts/numbers that appear in the actual conversation—never copy numbers from this example, and only mention payment if payment/challan/demand note are explicitly referenced in the remarks):
+✓ "Employee initiated process by requesting site plan e-signature. Processed application with document verification. Generated demand note [state amount ONLY if it appears verbatim in remarks]. Sent notifications to applicant for challan deposit and e-signature. Approved the site plan and completed processing. No bottlenecks evident - systematic progression through required steps."
 
 **For applicant summary:**
 - Start with what applicant did
@@ -445,8 +428,8 @@ Example for cooperative applicant:
 - No recommendations, just facts
 - Only mention docs in {{documentsExtracted}}
 
-Example for process ticket:
-✓ "Employee initiated site plan approval process. Applicant submitted required documents and completed e-signature. Employee verified documents, generated demand note of Rs. 22,092. Applicant deposited challan promptly. Employee conducted site inspection, confirmed plot details, and issued service document. Based on {{categoryIdentified}} category, ticket progressed through standard approval workflow. No significant delays - systematic processing completed."
+Example for process ticket (NEVER invent or copy financial figures—only state amounts that appear verbatim in the conversation):
+✓ "Employee initiated site plan approval process. Applicant submitted required documents and completed e-signature. Employee verified documents and generated demand note [mention amount only if explicitly stated in remarks]. Applicant deposited challan promptly. Employee conducted site inspection, confirmed plot details, and issued service document. Based on {{categoryIdentified}} category, ticket progressed through standard approval workflow. No significant delays - systematic processing completed."
 
 ---
 
@@ -468,6 +451,8 @@ CRITICAL REMINDERS:
 ✓ NO DOCUMENT HALLUCINATION: Overall insight only mentions docs in {{documentsExtracted}}
 ✓ SUBMISSION CONFIRMATION: "I submitted documents" means ALL requested docs submitted
 ✓ DIFFERENT PURPOSES: Each section analyzes different aspect - do not redirect to another section
+✓ NO FINANCIAL HALLUCINATION: NEVER invent or copy monetary amounts (e.g. Rs., ₹). Only state an amount if it appears VERBATIM in the conversation. If no amount is stated in remarks, do not mention any figure. Do NOT use numbers from prompt examples.
+✓ DELAY ATTRIBUTION: When explaining why delay occurred, you MUST support the cause with a direct quote or clear reference from the remarks. If remarks do not clearly support a delay reason, say so (e.g. "Delay attribution could not be clearly determined from the available remarks") and describe only what IS evident from the conversation.
 
 If conversation is minimal, work with what's there. Never leave sections empty or write meta-text about unavailability.
 
@@ -651,15 +636,15 @@ If NO explicit document requests found:
 CRITICAL REMINDERS:
 
 ✓ EXACT MATCH ONLY: Need complete document name, not partial words
-✓ "आधार" ≠ "आधार कार्ड": First is partial, second is complete name
-✓ QUOTE MUST CONTAIN: The complete document name as it appears in conversation
+✓ QUOTE MUST CONTAIN: The complete document name (English or Hindi) exactly as it appears in the conversation.
+✓ HALLUCINATION FORBIDDEN: If the specific document name is not in the text you are quoting, DO NOT extract it. mapping general terms like "original documents" to "Pan Card" is a failure.
 ✓ FALSE POSITIVES FORBIDDEN: Better to miss than to wrongly extract
 ✓ CONTEXT MATTERS: "चालान की राशि" is question about challan, not request for challan
 ✓ SEPARATED WORDS: "Site" and "plan" apart ≠ "Site Plan" document request
 
 ---
 
-Now analyze the conversation and return JSON output with ONLY exact-matched documents.`;
+Now analyze the conversation and return JSON output with ONLY documents that exist explicitly within your provided quotes.`;
 
 export const CATEGORY_CLASSIFICATION_PROMPT = `You are a delay categorization specialist for the Jaipur Development Authority (JDA). Your ONLY job is to classify the primary delay category for this ticket.
 
@@ -713,6 +698,10 @@ Indicators:
 - File movement between departments
 - Committee approval required
 - Internal JDA process taking time
+- Rajkaj file movement or pending at Rajkaj (राजकाज)
+- Notesheet/Note-sheet processing (नोटशीट)
+- File movement referenced by "Para /N" or "Pattravali"
+- "Check and report" on internal files
 
 ---
 
@@ -859,6 +848,13 @@ Base your classification ONLY on what is explicitly present in the conversation.
 - Do NOT assume things not stated
 - Do NOT use examples from this prompt as evidence
 - ONLY use actual remarks content
+- NEVER invent or copy financial figures (Rs., ₹); only state amounts that appear verbatim in remarks
+
+**RULE 9: DELAY ATTRIBUTION MUST BE SUPPORTED BY REMARKS**
+Your primaryCategory, reasoning, and delayBreakdown MUST be clearly supported by the conversation.
+- For each delay cause you state, provide a direct quote or clear reference from the remarks that supports it.
+- If the remarks do NOT clearly support a single delay cause, set confidence LOW (0.3-0.5) and in reasoning say: "Delay attribution is weak; the available remarks do not clearly support a single cause. [Describe what IS evident from the conversation.]"
+- Do NOT assert delay causes (e.g. "applicant did not submit documents") without evidence in the remarks. If evidence is absent or ambiguous, say so instead of asserting.
 
 ---
 
@@ -903,7 +899,8 @@ CRITICAL REMINDERS:
 ✓ PRIMARY CAUSE: Identify main cause from conversation pattern, not duration
 ✓ NATURAL REASONING: Write 100-200 words explaining what happened and why delay occurred. Sound intelligent, NOT like template checking. No phrases like "matches Category X" or "fits indicators".
 ✓ NO HALLUCINATION: Only use what's actually in the remarks, do not invent details
-✓ QUOTE EVIDENCE: Reference specific remarks to support your classification
+✓ QUOTE EVIDENCE: Reference specific remarks to support your classification. Delay attribution must be clearly supported by quoted or referenced remarks.
+✓ WEAK ATTRIBUTION: If remarks do not clearly support a single delay cause, use LOW confidence (0.3-0.5) and state in reasoning that attribution is weak and what IS evident from the conversation.
 
 Write reasoning as if explaining to a colleague - natural and readable.
 
@@ -916,152 +913,356 @@ Now analyze the conversation and return the JSON output.`;
 // ZONE OUTLIER REPORT PROMPT (for JDA Leadership)
 // --------------------------------------------------------------------------
 
-export const ZONE_OUTLIER_REPORT_PROMPT = `You are an expert forensic auditor and performance analyst for the Jaipur Development Authority (JDA). Your task is to analyze a single ticket and classify it as either an ANALYTICAL OUTLIER or a BEHAVIORAL OUTLIER. This report will be presented directly to JDA leadership.
+// export const ZONE_OUTLIER_REPORT_PROMPT = `You are an expert forensic auditor and performance analyst for the Jaipur Development Authority (JDA). Your task is to analyze a single ticket and classify it as either an ANALYTICAL OUTLIER or a BEHAVIORAL OUTLIER. This report will be presented directly to JDA leadership.
+
+// ---
+
+// TICKET CONTEXT:
+// - Ticket ID: {{ticketId}}
+// - Zone: {{zone}}
+// - Service Type: {{flowType}}
+// - Total Delay (Days): {{totalDelay}}
+// - Employee: {{employeeName}}
+
+// CONVERSATION HISTORY:
+// {{conversationHistory}}
+
+// DOCUMENTS SUBMITTED BY APPLICANT (verified from submission confirmations):
+// {{submittedDocuments}}
+
+// DOCUMENTS REQUESTED BY EMPLOYEE:
+// {{requestedDocuments}}
+
+// ---
+
+// IMPORTANT: LANGUAGE HANDLING
+// Remarks may be in Hindi, English, or Hinglish. Understand all forms. Output ONLY in English.
+
+// ---
+
+// OUTLIER CATEGORY DEFINITIONS:
+
+// **ANALYTICAL OUTLIER**
+// Delays caused by legitimate process gaps, documentation issues, or systemic inefficiencies. The employee is acting in good faith but there are structural/process problems.
+
+// Indicators:
+// - Applicant genuinely did not submit all required documents despite requests
+// - Approval or inspection is pending from a different authority outside the employee's control
+// - Inter-departmental coordination is causing delays (not the employee's fault)
+// - Process complexity or regulation requiring multiple sign-offs
+// - Employee gave unclear instructions (skill/communication gap — not malicious intent)
+// - Technical system failures or portal issues
+
+// **BEHAVIORAL OUTLIER**
+// Delays caused by an employee's intentional or negligent actions that mislead the applicant, stall the application unfairly, or show a lack of accountability. This is a potential integrity risk.
+
+// Indicators of Intentional Delay / Stalling:
+// - Employee gives deliberately vague or non-specific instructions (e.g., "submit required documents" without naming them) to keep the ticket pending without doing actual work
+// - Employee asks for a document that the APPLICANT ALREADY SUBMITTED (compare {{requestedDocuments}} vs {{submittedDocuments}})
+// - Employee claims a file is lost, missing or requires re-verification without evidence
+// - Employee ignores applicant messages or questions for extended periods
+// - Employee repeatedly requests the same document after applicant confirms submission
+// - Applicant provides proof of deposit/submission yet employee continues to delay
+// - Employee raises objections piecemeal (one by one) instead of all at once to artificially extend the timeline
+
+// ---
+
+// CRITICAL RULE — DOCUMENT CROSS-CHECK:
+// This is the MOST IMPORTANT signal for Behavioral Outlier detection.
+
+// IF an employee REQUESTS a document that already appears in {{submittedDocuments}} (confirmed by applicant submission):
+// → This is STRONG EVIDENCE of a Behavioral Outlier.
+// → Flag the specific document as "Falsely Requested After Submission".
+// → Quote the employee's remark that falsely requests it again.
+
+// IF {{submittedDocuments}} is empty or clearly shows the applicant never submitted the requested docs:
+// → Do NOT flag as Behavioral.
+// → Likely an Analytical Outlier on the applicant's side.
+
+// ---
+
+// CLASSIFICATION RULES:
+
+// RULE 1: CHOOSE EXACTLY ONE PRIMARY CATEGORY
+// Return either "Analytical Outlier" or "Behavioral Outlier". Never both as primary.
+
+// RULE 2: EVIDENCE-BASED ONLY
+// Base your verdict entirely on the conversation. Do NOT invent evidence.
+// Do NOT use prompt examples as evidence.
+
+// RULE 3: SEVERITY SCALE
+// - LOW: Minor delay, single instance, easy to fix
+// - MEDIUM: Noticeable pattern, multiple tickets or repeated remarks, systemic process gap
+// - HIGH: Clear employee misconduct evidence, applicant was misled significantly
+// - CRITICAL: Strong evidence of deliberate delay, document fraud, or manipulative behavior
+
+// RULE 4: CONFIDENCE SCORE
+// - 0.9-1.0: Undeniable evidence, multiple clear signals
+// - 0.7-0.8: Strong evidence, some ambiguity
+// - 0.5-0.6: Partial evidence, plausible hypothesis
+// - 0.3-0.4: Weak evidence, speculative
+
+// ---
+
+// RECOMMENDATION WRITING RULES:
+// - Write as if briefing JDA senior leadership
+// - Be specific about what should happen next (not generic)
+// - For Behavioral Outliers — recommend specific action (employee review, audit, ticket re-open)
+// - For Analytical Outliers — recommend process/system fix, training, or SLA recalibration
+// - 2-4 bullet points max
+// - Professional, direct, actionable language
+
+// ---
+
+// OUTPUT FORMAT (return ONLY valid JSON):
+
+// {
+//   "outlierReport": {
+//     "ticketId": "{{ticketId}}",
+//     "zone": "{{zone}}",
+//     "primaryCategory": "Analytical Outlier" | "Behavioral Outlier",
+//     "severity": "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
+//     "confidence": 0.0_to_1.0,
+//     "outlierSummary": "2-3 sentence executive summary of what happened. Write as if briefing a senior JDA official. Be specific. Mention the ticket number, zone, service type, and exact cause. Avoid generic language.",
+//     "rootCause": "1 sentence describing the primary cause of the delay.",
+//     "impactStatement": "1 sentence describing the impact on the applicant and JDA's service delivery score.",
+//     "documentCrossCheck": {
+//       "falsyRequestedAfterSubmission": ["Document 1 (if any employee requested this after it was already submitted)"],
+//       "genuinelyMissing": ["Document 1 (if applicant truly did not submit)"],
+//       "crossCheckSummary": "1-2 sentences summarizing the document status cross-check result."
+//     },
+//     "keyEvidence": [
+//       "Evidence 1: Direct quote or paraphrase from conversation proving your categorization",
+//       "Evidence 2: Another strong data point"
+//     ],
+//     "recommendations": [
+//       "Action 1: Specific, actionable recommendation for JDA leadership or management",
+//       "Action 2: Specific process/system/HR-level fix"
+//     ],
+//     "employeeSignalFlags": [
+//       {
+//         "flag": "One-line description of the concerning pattern",
+//         "evidence": "Quote or paraphrase from remark",
+//         "riskLevel": "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
+//       }
+//     ]
+//   }
+// }
+
+// ---
+
+// CRITICAL REMINDERS:
+// ✓ DOCUMENT CROSS-CHECK: Compare {{requestedDocuments}} vs {{submittedDocuments}} — this is the key signal for Behavioral Outliers
+// ✓ SINGLE CATEGORY: Choose exactly one — Analytical or Behavioral
+// ✓ EVIDENCE-BASED: Only use what is in the conversation. No invented facts.
+// ✓ EXECUTIVE LANGUAGE: This report is for JDA leadership. Professional, direct, specific.
+// ✓ SEVERITY: Be conservative. Only CRITICAL if there is strong, unambiguous misconduct evidence.
+// ✓ LANGUAGE: Understand Hindi/English/Hinglish remarks, output ONLY in English.
+
+// ---
+
+// Now analyze this ticket and return the JSON output.`;
+
+
+
+
+export const ZONE_OUTLIER_REPORT_PROMPT = `You are a senior management consultant preparing an executive outlier report for JDA (Jaipur Development Authority) leadership. Analyze ALL tickets to identify behavioral and analytical outliers, then create a consulting-grade executive report.
+
+You are running on a constrained local 8B model (Ollama 3:8B). You MUST:
+- Keep all text concise and non-repetitive.
+- Follow the JSON structure exactly.
+- Avoid long narrative paragraphs beyond what is explicitly requested for each field.
 
 ---
 
-TICKET CONTEXT:
-- Ticket ID: {{ticketId}}
-- Zone: {{zone}}
-- Service Type: {{flowType}}
-- Total Delay (Days): {{totalDelay}}
-- Employee: {{employeeName}}
+INPUT DATA:
 
-CONVERSATION HISTORY:
-{{conversationHistory}}
+Total Tickets Analyzed: {{totalTickets}}
 
-DOCUMENTS SUBMITTED BY APPLICANT (verified from submission confirmations):
-{{submittedDocuments}}
+TICKET DATA:
+{{ticketData}}
 
-DOCUMENTS REQUESTED BY EMPLOYEE:
-{{requestedDocuments}}
-
----
-
-IMPORTANT: LANGUAGE HANDLING
-Remarks may be in Hindi, English, or Hinglish. Understand all forms. Output ONLY in English.
-
----
-
-OUTLIER CATEGORY DEFINITIONS:
-
-**ANALYTICAL OUTLIER**
-Delays caused by legitimate process gaps, documentation issues, or systemic inefficiencies. The employee is acting in good faith but there are structural/process problems.
-
-Indicators:
-- Applicant genuinely did not submit all required documents despite requests
-- Approval or inspection is pending from a different authority outside the employee's control
-- Inter-departmental coordination is causing delays (not the employee's fault)
-- Process complexity or regulation requiring multiple sign-offs
-- Employee gave unclear instructions (skill/communication gap — not malicious intent)
-- Technical system failures or portal issues
-
-**BEHAVIORAL OUTLIER**
-Delays caused by an employee's intentional or negligent actions that mislead the applicant, stall the application unfairly, or show a lack of accountability. This is a potential integrity risk.
-
-Indicators of Intentional Delay / Stalling:
-- Employee gives deliberately vague or non-specific instructions (e.g., "submit required documents" without naming them) to keep the ticket pending without doing actual work
-- Employee asks for a document that the APPLICANT ALREADY SUBMITTED (compare {{requestedDocuments}} vs {{submittedDocuments}})
-- Employee claims a file is lost, missing or requires re-verification without evidence
-- Employee ignores applicant messages or questions for extended periods
-- Employee repeatedly requests the same document after applicant confirms submission
-- Applicant provides proof of deposit/submission yet employee continues to delay
-- Employee raises objections piecemeal (one by one) instead of all at once to artificially extend the timeline
+Format of ticketData - array of tickets with:
+[
+  {
+    ticketId: "T001",
+    zone: "Zone 1A",
+    flowType: "Name Transfer",
+    totalDelay: 15,
+    category: "Documentation & Compliance Issues",
+    documentsRequested: ["Pan Card", "Aadhar Card"],
+    documentsSubmitted: ["Pan Card"],
+    employeeForensics: "Forensic summary of employee actions (from employee remark analysis)",
+    applicantForensics: "Forensic summary of applicant actions and pain points",
+    sentimentSummary: "Overall sentiment summary for this ticket"
+  },
+  ...
+]
 
 ---
 
-CRITICAL RULE — DOCUMENT CROSS-CHECK:
-This is the MOST IMPORTANT signal for Behavioral Outlier detection.
-
-IF an employee REQUESTS a document that already appears in {{submittedDocuments}} (confirmed by applicant submission):
-→ This is STRONG EVIDENCE of a Behavioral Outlier.
-→ Flag the specific document as "Falsely Requested After Submission".
-→ Quote the employee's remark that falsely requests it again.
-
-IF {{submittedDocuments}} is empty or clearly shows the applicant never submitted the requested docs:
-→ Do NOT flag as Behavioral.
-→ Likely an Analytical Outlier on the applicant's side.
+TASK: 
+1. For every ticket in ticketData, internally classify it as Analytical Outlier, Behavioral Outlier, or Normal.
+2. ONLY include Analytical Outlier and Behavioral Outlier tickets inside "ticketReports". Do NOT include "Normal" tickets in the ticketReports array.
+3. Generate a concise, consulting-grade executive report for JDA leadership.
+4. Provide a zone-wise summary.
 
 ---
 
-CLASSIFICATION RULES:
+OUTLIER CLASSIFICATION:
 
-RULE 1: CHOOSE EXACTLY ONE PRIMARY CATEGORY
-Return either "Analytical Outlier" or "Behavioral Outlier". Never both as primary.
+**ANALYTICAL OUTLIER (TEXT-BASED)**
+Delays primarily driven by legitimate structural/process issues where the employee appears to act in good faith:
+- EmployeeForensics emphasizes workflow steps, approvals, inter-department transfers, Rajkaj/Note-sheet processing, or technical/system constraints.
+- ApplicantForensics shows reasonable compliance with requests and little or no blame on the applicant.
+- SentimentSummary is neutral/mild and does not show strong frustration caused by employee behavior.
+- NOTE: Delays titled "Rajkaj", "Internal File", or "Notesheet" are ALWAY Analytical/Process unless the employee is explicitly neglecting an action.
 
-RULE 2: EVIDENCE-BASED ONLY
-Base your verdict entirely on the conversation. Do NOT invent evidence.
-Do NOT use prompt examples as evidence.
+**BEHAVIORAL OUTLIER (TEXT-BASED)**  
+Delays primarily driven by employee behavior or negligence (integrity/behavioral risk):
+- EmployeeForensics highlights avoidable re-checks, vague or shifting instructions, or unnecessary steps not justified by the process.
+- ApplicantForensics shows cooperation but clear pain points or frustration linked to employee side (e.g., “applicant had to follow up multiple times despite completing requested actions”).
+- SentimentSummary reflects avoidable friction or negative sentiment directly tied to employee actions.
 
-RULE 3: SEVERITY SCALE
-- LOW: Minor delay, single instance, easy to fix
-- MEDIUM: Noticeable pattern, multiple tickets or repeated remarks, systemic process gap
-- HIGH: Clear employee misconduct evidence, applicant was misled significantly
-- CRITICAL: Strong evidence of deliberate delay, document fraud, or manipulative behavior
+**NORMAL (NO OUTLIER)**
+- EmployeeForensics shows straightforward, timely processing following expected workflow.
+- ApplicantForensics indicates smooth experience, full compliance, and minimal or no pain points.
+- SentimentSummary is neutral/positive with no clear avoidable delay pattern.
 
-RULE 4: CONFIDENCE SCORE
-- 0.9-1.0: Undeniable evidence, multiple clear signals
-- 0.7-0.8: Strong evidence, some ambiguity
-- 0.5-0.6: Partial evidence, plausible hypothesis
-- 0.3-0.4: Weak evidence, speculative
+**CRITICAL DETECTION RULE (NO DOCUMENT CROSS-CHECK):**
+For each ticket, use ONLY the employeeForensics, applicantForensics, and sentimentSummary fields:
+- If the dominant cause of any delay in the text is structural/process-based and employee behavior appears reasonable → classify as **Analytical Outlier** when delay is material, otherwise **Normal**.
+- If the forensic text clearly attributes avoidable delay or applicant pain to employee actions (with applicant cooperating) → classify as **Behavioral Outlier**.
+- If the forensic text shows routine processing with no clear avoidable delay pattern → classify as **Normal**.
 
 ---
-
-RECOMMENDATION WRITING RULES:
-- Write as if briefing JDA senior leadership
-- Be specific about what should happen next (not generic)
-- For Behavioral Outliers — recommend specific action (employee review, audit, ticket re-open)
-- For Analytical Outliers — recommend process/system fix, training, or SLA recalibration
-- 2-4 bullet points max
-- Professional, direct, actionable language
 
 ---
 
 OUTPUT FORMAT (return ONLY valid JSON):
 
 {
-  "outlierReport": {
-    "ticketId": "{{ticketId}}",
-    "zone": "{{zone}}",
-    "primaryCategory": "Analytical Outlier" | "Behavioral Outlier",
-    "severity": "LOW" | "MEDIUM" | "HIGH" | "CRITICAL",
-    "confidence": 0.0_to_1.0,
-    "outlierSummary": "2-3 sentence executive summary of what happened. Write as if briefing a senior JDA official. Be specific. Mention the ticket number, zone, service type, and exact cause. Avoid generic language.",
-    "rootCause": "1 sentence describing the primary cause of the delay.",
-    "impactStatement": "1 sentence describing the impact on the applicant and JDA's service delivery score.",
-    "documentCrossCheck": {
-      "falsyRequestedAfterSubmission": ["Document 1 (if any employee requested this after it was already submitted)"],
-      "genuinelyMissing": ["Document 1 (if applicant truly did not submit)"],
-      "crossCheckSummary": "1-2 sentences summarizing the document status cross-check result."
-    },
-    "keyEvidence": [
-      "Evidence 1: Direct quote or paraphrase from conversation proving your categorization",
-      "Evidence 2: Another strong data point"
-    ],
-    "recommendations": [
-      "Action 1: Specific, actionable recommendation for JDA leadership or management",
-      "Action 2: Specific process/system/HR-level fix"
-    ],
-    "employeeSignalFlags": [
+  "success": true,
+  "report": {
+    "projectId": "{{projectId}}",
+    "generatedAt": "{{currentDate}}",
+
+    "zoneSummary": [
       {
-        "flag": "One-line description of the concerning pattern",
-        "evidence": "Quote or paraphrase from remark",
-        "riskLevel": "LOW" | "MEDIUM" | "HIGH" | "CRITICAL"
+        "zone": "Zone 06",
+        "totalTickets": number,
+        "analyticalOutliers": number,
+        "behavioralOutliers": number,
+        "normalTickets": number,
+        "analyticalOutlierPercent": number,   // 0-100
+        "behavioralOutlierPercent": number,   // 0-100
+        "normalPercent": number,              // 0-100
+        "criticalCount": number,
+        "topRecommendation": "Specific action for this zone (e.g., 'Employee review and training on clear communication')"
       }
-    ]
+    ],
+
+    "ticketReports": [
+      {
+        "ticketId": "TICKET_ID_FROM_INPUT",  // MUST be one of the ticketId values present in ticketData
+        "zone": "Zone 06",
+        "primaryCategory": "Analytical Outlier" | "Behavioral Outlier",
+        "confidence": 0.0-1.0,
+        "outlierSummary": "2-3 sentences explaining what happened and why it's an outlier. Be specific with documents and actions.",
+        "rootCause": "One sentence describing primary cause of delay or 'No delay - standard processing'",
+        "impactStatement": "One sentence describing impact on applicant and JDA service delivery",
+        "documentCrossCheck": {
+          "falsyRequestedAfterSubmission": [],
+          "genuinelyMissing": [],
+          "crossCheckSummary": "Document-level cross-check is not evaluated in this report; leave arrays empty."
+        },
+        "keyEvidence": [
+          "Evidence 1: Specific quote or fact from conversation",
+          "Evidence 2: Another data point supporting classification"
+        ],
+        "recommendations": [
+          "Action 1: Specific actionable recommendation",
+          "Action 2: Another specific action if needed"
+        ]
+      }
+    ],
+
+    "executiveSummary": "Write 4-6 sentences for JDA leadership split into 2-3 distinct paragraphs (use '\\n\\n' as a delimiter between paragraphs). MANDATORY STRUCTURE: (1) Context: Analysis of [X] tickets from [zones] reveals [Y] outliers. (2) Behavioral: [Count] Behavioral Outliers ([%]) involving [specific patterns]. (3) Analytical: [Count] Analytical Outliers ([%]) primarily driven by [specific root cause]. (4) Action: [Root cause] requires [specific actions]. \n\nCRITICAL DATA INTEGRITY: The counts of Behavioral and Analytical outliers in this summary MUST EXACTLY MATCH the sums found in the 'zoneSummary' and 'ticketReports' arrays. Do NOT use placeholder IDs or generic phrases like 'Detected X Outlier(s)'. Ground all content in the provided ticketData."
   }
 }
 
 ---
 
-CRITICAL REMINDERS:
-✓ DOCUMENT CROSS-CHECK: Compare {{requestedDocuments}} vs {{submittedDocuments}} — this is the key signal for Behavioral Outliers
-✓ SINGLE CATEGORY: Choose exactly one — Analytical or Behavioral
-✓ EVIDENCE-BASED: Only use what is in the conversation. No invented facts.
-✓ EXECUTIVE LANGUAGE: This report is for JDA leadership. Professional, direct, specific.
-✓ SEVERITY: Be conservative. Only CRITICAL if there is strong, unambiguous misconduct evidence.
-✓ LANGUAGE: Understand Hindi/English/Hinglish remarks, output ONLY in English.
+WRITING GUIDELINES:
+
+**Executive Summary - CRITICAL (Most Important Field):**
+
+For 1 ticket:
+"Analysis of 1 ticket from [Zone] reveals 1 [Behavioral/Analytical] Outlier (100% outlier rate). 
+
+Ticket [ID] involves [specific employee action with document names], indicating [system issue or employee negligence]. This [behavioral/analytical] case caused [specific impact] on JDA service delivery benchmarks. 
+
+[Pattern] suggests [root cause] requiring [specific actions]."
+
+For multiple tickets:
+"Analysis of [X] tickets across [zones] reveals [Y] outliers ([Z%]). 
+
+Behavioral outliers account for [%] ([count] tickets) involving [specific pattern]. Analytical outliers represent [%] ([count] tickets) driven by [specific cause]. Zone [X] shows [comparison with data]. 
+
+Combined outliers caused [quantified impact]. [Top pattern] requires [specific actions]."
+
+**Forbidden Phrases:**
+❌ "Detected X Outlier(s)"
+❌ "require immediate leadership attention"  
+❌ "potential employee misconduct"
+❌ "process/documentation gaps"
+❌ "covering X tickets across Y zones"
+
+**Required Elements:**
+✓ Specific ticket IDs
+✓ Specific document names
+✓ Specific zone names
+✓ Percentages and numbers
+✓ Comparisons and benchmarks
+✓ Quantified impacts
+✓ Specific actions
+
+**Zone Summary - Top Recommendation:**
+Be specific, not generic.
+
+GOOD: "Employee review and training on document verification protocols within 15 days"
+GOOD: "Implement automated document tracking to prevent false re-requests"
+BAD: "Improve processes"
+BAD: "Better training needed"
+
+**Outlier Summary:**
+2-3 sentences with specific details.
+
+GOOD: "Employee repeatedly requested Pan Card, Aadhar Card, and Challan after applicant confirmed submission on Day 3. Document cross-check confirms all three were submitted. Employee's false re-request caused 12-day unnecessary delay."
+
+BAD: "The employee requested documents that were already submitted, causing delays."
+
+**Document Cross-Check Summary:**
+State exactly what was submitted and what employee claimed.
+
+GOOD: "Applicant submitted Pan Card on Day 2 and Aadhar Card on Day 3 with confirmation receipts. Employee claimed both missing on Day 8."
+
+BAD: "Documents were submitted but employee requested them again."
 
 ---
 
-Now analyze this ticket and return the JSON output.`;
+CRITICAL REMINDERS:
+
+✓ EXECUTIVE SUMMARY: Follow exact structure and use '\\n\\n' for paragraph breaks.
+✓ DATA INTEGRITY: Counts in the summary MUST match the 'zoneSummary' and 'ticketReports' exactly.
+✓ TEXT CROSS-CHECK: Ensure any claim about behavior or process is clearly supported by the forensic text fields.
+✓ TICKET IDS: Every ticketId inside ticketReports MUST be exactly one of the ticketId values present in ticketData. 
+✓ BE SPECIFIC: Name zones, tickets, employees - avoid vague language
+✓ USE PERCENTAGES: Every count should have a percentage
+✓ ZONE COMPARISON: Compare zones when multiple zones present
+✓ QUANTIFY IMPACT: State delay days, applicant frustration, service credibility
+✓ ACTIONABLE RECOMMENDATIONS: Specific actions with WHO and WHEN
+
+---
+
+Now analyze all tickets and generate the outlier report matching this exact JSON structure.`;

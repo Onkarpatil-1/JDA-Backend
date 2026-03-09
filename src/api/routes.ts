@@ -271,12 +271,26 @@ export function createRouter(
 
             const aiProvider = (req.body?.aiProvider as any) || 'ollama';
             const apiKey = req.body?.apiKey;
+            const zoneName = req.body?.zoneName;
 
-            console.log(`\n🗺️  Zone Outlier Report requested for project: ${projectId}`);
+            console.log(`\n🗺️  Zone Outlier Report requested for project: ${projectId}${zoneName ? ` | Zone: ${zoneName}` : ''}`);
+
+            let stepsToAnalyze = project.workflowSteps;
+            if (zoneName) {
+                // Find all tickets that belong to the specified zone
+                const zoneTickets = new Set(
+                    project.workflowSteps
+                        .filter(s => (s.zoneId || s.rawRow?.['ZoneName']) === zoneName)
+                        .map(s => s.ticketId)
+                );
+                // Filter all steps for those tickets
+                stepsToAnalyze = project.workflowSteps.filter(s => zoneTickets.has(s.ticketId));
+            }
 
             const report = await slaService.generateZoneOutlierReport(
                 projectId,
-                project.workflowSteps,
+                stepsToAnalyze,
+                project.statistics?.aiInsights?.forensicReports || {},
                 aiProvider,
                 apiKey
             );

@@ -56,8 +56,9 @@ export function buildJDAHierarchy(steps: WorkflowStep[]): JDAIntelligence {
 
             serviceMap.forEach((tickets, serviceName) => {
                 // Determine insight for this service level
-                const avgDays = tickets.reduce((sum, t) => sum + t.totalDaysRested, 0) / tickets.length;
-                const serviceInsight = `Avg Processing: ${avgDays.toFixed(1)} days. Total Tickets: ${tickets.length}`;
+                const avgDays = tickets.length > 0 ? (tickets.reduce((sum, t) => sum + t.totalDaysRested, 0) / tickets.length) : 0;
+                const uniqueTickets = new Set(tickets.map(t => t.ticketId));
+                const serviceInsight = `Avg Processing: ${avgDays.toFixed(1)} days. Total Tickets: ${uniqueTickets.size}`;
 
                 services.push({
                     name: serviceName,
@@ -66,9 +67,9 @@ export function buildJDAHierarchy(steps: WorkflowStep[]): JDAIntelligence {
                         ticketId: t.ticketId,
                         stepOwnerName: t.employeeName || 'Unknown', // Map Name
                         stepOwnerRole: t.post, // Map Role (Designation)
-                        remarkOriginal: t.lifetimeRemarksFrom || 'No remarks',
-                        remarkEnglishSummary: t.lifetimeRemarksFrom || 'No remarks', // Default to original, LLM will overwrite
-                        detectedCategory: ruleBasedDelayClassification(t.lifetimeRemarksFrom || ''),
+                        remarkOriginal: t.lifetimeRemarks || 'No remarks',
+                        remarkEnglishSummary: t.lifetimeRemarks || 'No remarks', // Default to original, LLM will overwrite
+                        detectedCategory: ruleBasedDelayClassification(t.lifetimeRemarks || ''),
                         daysRested: t.totalDaysRested
                     }))
                 });
@@ -153,19 +154,12 @@ export function analyzeWorkflowData(workflowSteps: WorkflowStep[]): ProjectStati
     const anomalyCount = anomalies.length;
 
     // Find critical bottleneck (role with highest average delay)
-    const excludedRoles = ['APPLICANT', 'CITIZEN', 'SYSTEM', 'UNKNOWN'];
-
     const roleDelays = new Map<string, number[]>();
     workflowSteps.forEach(step => {
-        // Normalize role for check
-        const role = step.post.toUpperCase().trim();
-        if (!roleDelays.has(step.post) && !excludedRoles.includes(role)) {
+        if (!roleDelays.has(step.post)) {
             roleDelays.set(step.post, []);
         }
-
-        if (roleDelays.has(step.post)) {
-            roleDelays.get(step.post)!.push(step.totalDaysRested);
-        }
+        roleDelays.get(step.post)!.push(step.totalDaysRested);
     });
 
     let criticalBottleneck: ProjectStatistics['criticalBottleneck'] | undefined;
@@ -189,16 +183,9 @@ export function analyzeWorkflowData(workflowSteps: WorkflowStep[]): ProjectStati
     // Find top performers (employees with best avg time and high task count)
     const employeePerformance = new Map<string, { tasks: number; totalTime: number; role: string }>();
 
-    const excludedEmployees = ['APPLICANT', 'CITIZEN', 'SYSTEM', 'UNKNOWN', 'Admin', 'Administrator'];
-
     workflowSteps.forEach(step => {
         const employeeName = step.lifetimeRemarksFrom || 'Unknown';
-        const normalizedName = employeeName.toUpperCase().trim();
-
-        // Skip if employee matches exclusion list
-        if (excludedEmployees.some(ex => normalizedName.includes(ex.toUpperCase()))) {
-            return;
-        }
+        // Removed exclusion filter as per user request to "dont filter any"
 
         if (!employeePerformance.has(employeeName)) {
             employeePerformance.set(employeeName, { tasks: 0, totalTime: 0, role: step.post });
@@ -415,7 +402,23 @@ export function parseWorkflowStep(row: any): WorkflowStep {
         parentServiceName: row['Parent Service Name'] || row.ParentServiceName || row.parentServiceName || 'General Service',
         departmentName: row['Department Name'] || row.DepartmentName || row.departmentName || row.OwnerDepartmentId || 'General Department',
         post: row.Post || row.post || '',
-        zoneId: row.ZoneID || row.zoneId || (row.DepartmentName?.match(/(?:Zone|ZONE)\s*[-:]?\s*(\d+)/i)?.[1]) || (row.Post?.match(/(?:Zone|ZONE)\s*[-:]?\s*(\d+)/i)?.[1]) || 'General',
+        zoneId: (() => {
+            // 1. Check explicit columns
+            const explicit = row.ZoneID || row.zoneId;
+            if (explicit) return String(explicit).trim();
+
+            // 2. Extract content in parentheses (e.g., "Deputy Commissioner (PRN-South)" -> "PRN-South")
+            const parenMatch = row.DepartmentName?.match(/\(([^)]+)\)/) || row.Post?.match(/\(([^)]+)\)/);
+            if (parenMatch && parenMatch[1]) return parenMatch[1].trim();
+
+            // 3. Look for "Zone X" pattern (could be numeric or name)
+            const zoneMatch = row.DepartmentName?.match(/(?:Zone|ZONE)\s*[-:]?\s*([A-Z0-9-]+)/i) ||
+                row.Post?.match(/(?:Zone|ZONE)\s*[-:]?\s*([A-Z0-9-]+)/i);
+            if (zoneMatch && zoneMatch[1]) return zoneMatch[1].trim();
+
+            // 4. Fallback to Department Name or "General"
+            return (row.DepartmentName || row.DepartmentName === '' ? row.DepartmentName : undefined) || 'General';
+        })(),
         applicationDate: row['Application Date'] || row.ApplicationDate || row.applicationDate || '',
         deliveredOn: row.DeliverdOn || row.deliveredOn || '',
         totalDaysRested: parseFloat(row.TotalDaysRested || row.totalDaysRested || 0),

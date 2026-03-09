@@ -73,7 +73,7 @@ export const createCategoryClassificationPrompt = (context: CategoryClassificati
 
 export const createZoneOutlierReportPrompt = (context: ZoneOutlierReportContext): string => {
     return interpolate(ZONE_OUTLIER_REPORT_PROMPT, {
-        ...context,
-        totalDelay: String(context.totalDelay)
+        totalTickets: String(context.totalTickets),
+        ticketData: context.ticketData
     });
 };

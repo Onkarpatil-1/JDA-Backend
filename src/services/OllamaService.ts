@@ -39,7 +39,8 @@ export class OllamaService implements AIService {
                 options: {
                     temperature: options?.temperature ?? this.defaultTemperature,
                     top_p: options?.top_p,
-                    num_ctx: 4096,
+                    num_ctx: 8192,
+                    num_predict: 4096,
                 },
             });
 
@@ -78,7 +79,8 @@ export class OllamaService implements AIService {
                 options: {
                     temperature: options?.temperature ?? this.defaultTemperature,
                     top_p: options?.top_p,
-                    num_ctx: 4096,
+                    num_ctx: 8192,
+                    num_predict: 4096,
                 },
             });
 

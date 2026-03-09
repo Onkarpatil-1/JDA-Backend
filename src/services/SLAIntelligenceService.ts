@@ -48,10 +48,11 @@ export class SLAIntelligenceService {
     async generateZoneOutlierReport(
         projectId: string,
         workflowSteps: any[],
+        forensicReports: Record<string, any> = {},
         provider: AIProvider = 'ollama',
         apiKey?: string
     ): Promise<ZoneOutlierReport> {
         const aiAnalysisService = new AIAnalysisService();
-        return aiAnalysisService.generateZoneOutlierReport(projectId, workflowSteps, provider, apiKey);
+        return aiAnalysisService.generateZoneOutlierReport(projectId, workflowSteps, forensicReports, provider, apiKey);
     }
 }

@@ -38,8 +38,10 @@ export class ProjectService {
                 chunkSize: 1024 * 1024, // Process 1MB chunks
                 complete: async (results) => {
                     try {
-                        // Parse workflow steps
-                        const workflowSteps: WorkflowStep[] = results.data.map(parseWorkflowStep);
+                        // Parse workflow steps and filter out rows with missing Ticket ID
+                        const workflowSteps: WorkflowStep[] = results.data
+                            .map(parseWorkflowStep)
+                            .filter(step => step.ticketId && step.ticketId.trim() !== '');
 
                         // Generate statistics
                         const statistics = analyzeWorkflowData(workflowSteps);

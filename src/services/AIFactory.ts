@@ -17,7 +17,7 @@ export class AIFactory {
     private constructor() {
         // Initialize default Ollama service
         const ollamaHost = process.env.OLLAMA_HOST || 'http://localhost:11434';
-        const ollamaModel = process.env.OLLAMA_MODEL || 'llama3.2:3b';
+        const ollamaModel = process.env.OLLAMA_MODEL || 'llama3:8b';
         this.services.set('ollama', new OllamaService({ host: ollamaHost, model: ollamaModel }));
     }
 
@@ -50,8 +50,8 @@ export class AIFactory {
         switch (provider) {
             case 'ollama':
                 // Ollama doesn't use API keys usually, but we keep signature consistent
-                const ollamaHost = 'http://52.66.67.51:11434/';
-                const ollamaModel = 'llama3:8b';
+                const ollamaHost = process.env.OLLAMA_HOST || 'http://52.66.67.51:11434';
+                const ollamaModel = process.env.OLLAMA_MODEL || 'llama3:8b';
                 return new OllamaService({ host: ollamaHost, model: ollamaModel });
             // const geminiKey1 = apiKey || process.env.GEMINI_API_KEY;
             // if (!geminiKey1) throw new Error('GEMINI_API_KEY is not set');

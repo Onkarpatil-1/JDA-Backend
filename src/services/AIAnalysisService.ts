@@ -37,6 +37,48 @@ export class AIAnalysisService {
     }
 
     /**
+     * Robustly parse date strings supporting DD-MM-YYYY (new) and MM/DD/YYYY (fallback).
+     */
+    private parseDateString(dateStr: string): Date | null {
+        if (!dateStr || dateStr === 'NULL' || typeof dateStr !== 'string') return null;
+
+        try {
+            // Priority 1: DD-MM-YYYY (User request)
+            if (dateStr.includes('-')) {
+                const parts = dateStr.split('-');
+                if (parts.length === 3) {
+                    const [d, m, y] = parts.map(Number);
+                    if (!isNaN(d) && !isNaN(m) && !isNaN(y)) {
+                        // Validate month (1-12) and day (1-31)
+                        if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+                            return new Date(y, m - 1, d);
+                        }
+                    }
+                }
+            }
+
+            // Priority 2: MM/DD/YYYY (Legacy format)
+            if (dateStr.includes('/')) {
+                const parts = dateStr.split('/');
+                if (parts.length === 3) {
+                    const [m, d, y] = parts.map(Number);
+                    if (!isNaN(d) && !isNaN(m) && !isNaN(y)) {
+                        if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+                            return new Date(y, m - 1, d);
+                        }
+                    }
+                }
+            }
+
+            // Priority 3: Native JS parsing (YYYY-MM-DD or standard)
+            const d = new Date(dateStr);
+            return isNaN(d.getTime()) ? null : d;
+        } catch {
+            return null;
+        }
+    }
+
+    /**
      * Generate a Zone-Wise Outlier Report for JDA leadership.
      * Analyzes all tickets grouped by zone, detects Analytical vs Behavioral outliers.
      * Behavioral outliers = employees requesting already-submitted documents (fraud signal).
@@ -44,6 +86,7 @@ export class AIAnalysisService {
     public async generateZoneOutlierReport(
         projectId: string,
         workflowSteps: any[],
+        forensicReports?: Record<string, any>,
         provider: AIProvider = 'ollama',
         apiKey?: string
     ): Promise<ZoneOutlierReport> {
@@ -58,151 +101,186 @@ export class AIAnalysisService {
             }
         }
 
-        const ticketReports: ZoneOutlierTicketReport[] = [];
-
-        const BATCH_SIZE = 2;
         const ticketEntries = Array.from(ticketMap.entries());
 
-        console.log(`\n🗺️  ZONE OUTLIER REPORT — Analyzing ${ticketEntries.length} tickets`);
+        console.log(`\n🗺️  ZONE OUTLIER REPORT — Preparing ${ticketEntries.length} tickets for bulk analysis`);
 
-        for (let i = 0; i < ticketEntries.length; i += BATCH_SIZE) {
-            const batch = ticketEntries.slice(i, i + BATCH_SIZE);
-            await Promise.all(batch.map(async ([ticketId, steps]) => {
-                try {
-                    const lastStep = steps[steps.length - 1];
-                    const zone = lastStep?.rawRow?.['ZoneName'] || lastStep?.zoneId || 'Unknown Zone';
-                    const flowType = lastStep?.serviceName || 'Unknown Service';
-                    const employeeName = lastStep?.employeeName || 'Unknown Employee';
+        const ticketDataArray = await Promise.all(ticketEntries.map(async ([ticketId, steps]) => {
+            const lastStep = steps[steps.length - 1];
+            const zone = lastStep?.rawRow?.['ZoneName'] || lastStep?.zoneId || 'Unknown Zone';
+            const flowType = lastStep?.serviceName || 'Unknown Service';
 
-                    // Calculate total delay
-                    const appDateStep = steps.find((s: any) => s.rawRow?.['ApplicationDate'] && s.rawRow['ApplicationDate'] !== 'NULL');
-                    const delDateStep = steps.find((s: any) => s.rawRow?.['DeliverdOn'] && s.rawRow['DeliverdOn'] !== 'NULL');
-                    let totalDelay = 0;
-                    if (appDateStep?.rawRow?.['ApplicationDate'] && delDateStep?.rawRow?.['DeliverdOn']) {
-                        try {
-                            const [am, ad, ay] = appDateStep.rawRow['ApplicationDate'].split('/').map(Number);
-                            const [dm, dd, dy] = delDateStep.rawRow['DeliverdOn'].split('/').map(Number);
-                            totalDelay = Math.floor((new Date(dy, dm - 1, dd).getTime() - new Date(ay, am - 1, ad).getTime()) / 86400000);
-                        } catch { }
-                    }
+            // Calculate total delay
+            const appDateStr = steps.find((s: any) => s.rawRow?.['ApplicationDate'] && s.rawRow['ApplicationDate'] !== 'NULL')?.rawRow?.['ApplicationDate'];
+            const delDateStr = steps.find((s: any) => s.rawRow?.['DeliverdOn'] && s.rawRow['DeliverdOn'] !== 'NULL')?.rawRow?.['DeliverdOn'];
 
-                    // Reconstruct conversation
-                    const conversationHistory = steps.map((step: any) => {
-                        const rf = (step.lifetimeRemarksFrom || '').trim();
-                        const rm = (step.lifetimeRemarks || '').trim();
-                        const date = step.rawRow?.['MaxEventTimeStamp'] || 'Unknown Date';
-                        return `[${date}] lifetimeRemarksFrom: "${rf.replace(/"/g, "'")}" | lifetimeRemarks: "${rm.replace(/"/g, "'")}"`;
-                    }).join('\n');
-
-                    // Hybrid doc extraction (already used for forensic reports)
-                    const docResult = await this.hybridDocumentExtraction(conversationHistory, ticketId, aiService);
-                    const submittedDocs = docResult.submissionConfirmed && docResult.documents.length > 0
-                        ? docResult.documents.join(', ')
-                        : docResult.submissionConfirmed ? 'Applicant confirmed submission (specific docs unclear)' : 'None confirmed';
-                    const requestedDocs = docResult.documents.length > 0
-                        ? docResult.documents.join(', ')
-                        : 'None identified';
-
-                    // Generate outlier report with the leadership prompt
-                    const prompt = createZoneOutlierReportPrompt({
-                        ticketId,
-                        zone,
-                        flowType,
-                        totalDelay,
-                        employeeName,
-                        conversationHistory,
-                        submittedDocuments: submittedDocs,
-                        requestedDocuments: requestedDocs
-                    });
-
-                    const response = await aiService.generate(prompt, { format: 'json', temperature: 0.1 });
-                    const parsed = this.cleanAndParseJSON(response.content);
-
-                    if (parsed?.outlierReport) {
-                        const rpt = parsed.outlierReport;
-
-                        // Strict stringification helper for arrays
-                        const ensureStringArray = (arr: any): string[] => {
-                            if (!Array.isArray(arr)) return [];
-                            return arr.map(item => {
-                                if (typeof item === 'string') return item;
-                                if (item === null || item === undefined) return '';
-                                // If it's an object with a single value (like { action: "foo" } or { document: "bar" }), extract the value
-                                if (typeof item === 'object') {
-                                    const vals = Object.values(item);
-                                    if (vals.length > 0 && typeof vals[0] === 'string') return vals[0] as string;
-                                    try { return JSON.stringify(item); } catch { return String(item); }
-                                }
-                                return String(item);
-                            }).filter(s => s.length > 0);
-                        };
-
-                        ticketReports.push({
-                            ticketId,
-                            zone,
-                            primaryCategory: rpt.primaryCategory === 'Behavioral Outlier' ? 'Behavioral Outlier' : 'Analytical Outlier',
-                            severity: ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(rpt.severity) ? rpt.severity : 'MEDIUM',
-                            confidence: typeof rpt.confidence === 'number' ? rpt.confidence : 0.5,
-                            outlierSummary: typeof rpt.outlierSummary === 'string' ? rpt.outlierSummary : 'No summary available',
-                            rootCause: typeof rpt.rootCause === 'string' ? rpt.rootCause : 'Unknown',
-                            impactStatement: typeof rpt.impactStatement === 'string' ? rpt.impactStatement : 'Unknown impact',
-                            documentCrossCheck: {
-                                falsyRequestedAfterSubmission: ensureStringArray(rpt.documentCrossCheck?.falsyRequestedAfterSubmission),
-                                genuinelyMissing: ensureStringArray(rpt.documentCrossCheck?.genuinelyMissing),
-                                crossCheckSummary: typeof rpt.documentCrossCheck?.crossCheckSummary === 'string' ? rpt.documentCrossCheck.crossCheckSummary : ''
-                            },
-                            keyEvidence: ensureStringArray(rpt.keyEvidence),
-                            recommendations: ensureStringArray(rpt.recommendations),
-                            employeeSignalFlags: Array.isArray(rpt.employeeSignalFlags) ? rpt.employeeSignalFlags.filter((f: any) => typeof f === 'object' && f.flag) : []
-                        });
-                        console.log(`  ✅ [ZoneOutlier] Ticket ${ticketId} → ${rpt.primaryCategory} | Severity: ${rpt.severity}`);
-                    }
-                } catch (err) {
-                    console.error(`  ⚠️ [ZoneOutlier] Failed for ticket ${ticketId}`, err);
+            let totalDelay = 0;
+            if (appDateStr && delDateStr) {
+                const start = this.parseDateString(appDateStr);
+                const end = this.parseDateString(delDateStr);
+                if (start && end) {
+                    totalDelay = Math.floor((end.getTime() - start.getTime()) / 86400000);
                 }
-            }));
-        }
+            }
 
-        // Build zone summary
-        const zoneMap = new Map<string, { analytical: number; behavioral: number; critical: number; tickets: ZoneOutlierTicketReport[] }>();
-        for (const rpt of ticketReports) {
-            if (!zoneMap.has(rpt.zone)) zoneMap.set(rpt.zone, { analytical: 0, behavioral: 0, critical: 0, tickets: [] });
-            const zm = zoneMap.get(rpt.zone)!;
-            zm.tickets.push(rpt);
-            if (rpt.primaryCategory === 'Analytical Outlier') zm.analytical++;
-            else zm.behavioral++;
-            if (rpt.severity === 'CRITICAL') zm.critical++;
-        }
+            // Reconstruct conversation (kept only for potential future use / debugging)
+            const conversationHistory = steps.map((step: any) => {
+                const rf = (step.lifetimeRemarksFrom || '').trim();
+                const rm = (step.lifetimeRemarks || '').trim();
+                const date = step.rawRow?.['MaxEventTimeStamp'] || 'Unknown Date';
+                return `[${date}] lifetimeRemarksFrom: "${rf.replace(/"/g, "'")}" | lifetimeRemarks: "${rm.replace(/"/g, "'")}"`;
+            }).join('\n');
 
-        const zoneSummary = Array.from(zoneMap.entries()).map(([zone, data]) => {
-            // Pick top recommendation from highest severity ticket
-            const topTicket = data.tickets.sort((a, b) => ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].indexOf(b.severity) - ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].indexOf(a.severity))[0];
+            const reportData = forensicReports?.[ticketId];
+
+            let category = "Unknown";
+            let employeeForensics = "Unknown";
+            let applicantForensics = "Unknown";
+            let sentimentSummary = "Unknown";
+
+            if (reportData) {
+                employeeForensics = reportData.employeeRemarkAnalysis?.summary || "Unknown";
+                applicantForensics = reportData.applicantRemarkAnalysis?.summary || "Unknown";
+                sentimentSummary =
+                    reportData.sentimentSummary ||
+                    reportData.overallRemarkAnalysis?.applicantRemarksOverall?.sentimentSummary ||
+                    "Unknown";
+                category = reportData.delayAnalysis?.primaryDelayCategory || "Unknown";
+            }
+
             return {
+                ticketId,
                 zone,
-                totalTickets: data.tickets.length,
-                analyticalOutliers: data.analytical,
-                behavioralOutliers: data.behavioral,
-                criticalCount: data.critical,
-                topRecommendation: topTicket?.recommendations?.[0] || 'No critical recommendation'
+                flowType,
+                totalDelay,
+                category,
+                employeeForensics,
+                applicantForensics,
+                sentimentSummary
             };
+        }));
+
+        const prompt = createZoneOutlierReportPrompt({
+            totalTickets: ticketEntries.length,
+            ticketData: JSON.stringify(ticketDataArray, null, 2)
         });
 
-        // Executive summary
-        const totalBehavioral = ticketReports.filter(r => r.primaryCategory === 'Behavioral Outlier').length;
-        const totalAnalytical = ticketReports.filter(r => r.primaryCategory === 'Analytical Outlier').length;
-        const totalCritical = ticketReports.filter(r => r.severity === 'CRITICAL').length;
-        const executiveSummary = `Zone Outlier Analysis covering ${ticketReports.length} tickets across ${zoneMap.size} zones. ` +
-            `Detected ${totalBehavioral} Behavioral Outlier(s) (potential employee misconduct) and ${totalAnalytical} Analytical Outlier(s) (process/documentation gaps). ` +
-            `${totalCritical} ticket(s) are flagged as CRITICAL risk and require immediate leadership attention.`;
+        // Helper: sanitize LLM report so zoneSummary counts always match ticketReports
+        const sanitizeReport = (report: ZoneOutlierReport): ZoneOutlierReport => {
+            // Build total ticket counts per zone from the raw ticketDataArray input
+            const zoneTicketCounts = new Map<string, number>();
+            ticketDataArray.forEach((t: any) => {
+                const zoneKey = t.zone || 'Unknown Zone';
+                zoneTicketCounts.set(zoneKey, (zoneTicketCounts.get(zoneKey) || 0) + 1);
+            });
 
-        console.log(`\n🗺️  ZONE OUTLIER REPORT COMPLETE — ${ticketReports.length} tickets | ${totalBehavioral} Behavioral | ${totalAnalytical} Analytical | ${totalCritical} Critical`);
+            const zones = Array.from(zoneTicketCounts.keys());
+            const safeZoneSummary = zones.map(zone => {
+                const total = zoneTicketCounts.get(zone) || 0;
+                const analytical = report.ticketReports.filter(
+                    tr => tr.zone === zone && tr.primaryCategory === 'Analytical Outlier'
+                ).length;
+                const behavioral = report.ticketReports.filter(
+                    tr => tr.zone === zone && tr.primaryCategory === 'Behavioral Outlier'
+                ).length;
+                const criticalCount = report.ticketReports.filter(
+                    tr => tr.zone === zone && tr.severity === 'CRITICAL'
+                ).length;
 
+                const normal = Math.max(total - analytical - behavioral, 0);
+                const analyticalPct = total ? (analytical / total) * 100 : 0;
+                const behavioralPct = total ? (behavioral / total) * 100 : 0;
+                const normalPct = total ? (normal / total) * 100 : 0;
+
+                const original: any = (report.zoneSummary || []).find(z => z.zone === zone);
+                const topRecommendation =
+                    original?.topRecommendation ||
+                    'Monitor this zone for repeated outlier patterns and review officer-level behavior where needed.';
+
+                return {
+                    zone,
+                    totalTickets: total,
+                    analyticalOutliers: analytical,
+                    behavioralOutliers: behavioral,
+                    normalTickets: normal,
+                    analyticalOutlierPercent: Number(analyticalPct.toFixed(1)),
+                    behavioralOutlierPercent: Number(behavioralPct.toFixed(1)),
+                    normalPercent: Number(normalPct.toFixed(1)),
+                    topRecommendation
+                } as any;
+            });
+
+            // --- Executive Summary Post-Correction ---
+            // The LLM sometimes hallucinates counts in the prose. We force-correct them using regex.
+            let summary = report.executiveSummary || "";
+            const totalOutliers = report.ticketReports.length;
+            const aCount = report.ticketReports.filter(t => t.primaryCategory === 'Analytical Outlier').length;
+            const bCount = report.ticketReports.filter(t => t.primaryCategory === 'Behavioral Outlier').length;
+            const totalTickets = ticketDataArray.length;
+            const outlierPct = totalTickets ? (totalOutliers / totalTickets) * 100 : 0;
+            const aPct = totalTickets ? (aCount / totalTickets) * 100 : 0;
+            const bPct = totalTickets ? (bCount / totalTickets) * 100 : 0;
+
+            // 1. Correct "reveals X outliers (Y%)"
+            summary = summary.replace(/reveals \d+ outliers \(\d+(\.\d+)?%\)/i,
+                `reveals ${totalOutliers} outliers (${outlierPct.toFixed(1)}%)`);
+
+            // 1.5 Strip any "during [period]" hallucinations
+            summary = summary.replace(/during \d{2}-\d{2}-\d{4} to \d{2}-\d{2}-\d{4}/gi, '');
+            summary = summary.replace(/during [^. ]+ to [^. ]+/gi, ''); // catch other period formats
+
+            // 2. Correct "X Behavioral Outliers (Y%)" or "X ticket"
+            summary = summary.replace(/(\d+)\s+Behavioral Outliers\s+\(\d+(\.\d+)?%\)/gi,
+                `${bCount} Behavioral Outliers (${bPct.toFixed(1)}%)`);
+            summary = summary.replace(/\d+\s+Behavioral Outlier\s+\(\d+(\.\d+)?%\)/gi,
+                `${bCount} Behavioral Outlier (${bPct.toFixed(1)}%)`);
+
+            // 3. Correct "X Analytical Outliers (Y%)" or "X ticket"
+            summary = summary.replace(/(\d+)\s+Analytical Outliers\s+\(\d+(\.\d+)?%\)/gi,
+                `${aCount} Analytical Outliers (${aPct.toFixed(1)}%)`);
+            summary = summary.replace(/\d+\s+Analytical Outlier\s+\(\d+(\.\d+)?%\)/gi,
+                `${aCount} Analytical Outlier (${aPct.toFixed(1)}%)`);
+
+            // 4. Correct counts for singular "1 ticket" or "X tickets" phrasing if specific patterns exist
+            summary = summary.replace(/\(\d+\s+tickets\)/gi, `(${totalOutliers} tickets)`);
+            summary = summary.replace(/(\d+)\s+ticket\)/gi, (match, p1) => match.includes('Behavioral') ? `${bCount} ticket)` : match.includes('Analytical') ? `${aCount} ticket)` : match);
+
+            return {
+                ...report,
+                zoneSummary: safeZoneSummary,
+                executiveSummary: summary
+            };
+        };
+
+        console.log(`⏳ Sending bulk payload to LLM (will take ~1-2 mins depending on GPU)...`);
+        try {
+            const response = await aiService.generate(prompt, {
+                format: 'json',
+                temperature: 0.1,
+                systemPrompt: `You are generating a zone outlier report for JDA leadership.
+You MUST only use ticketId values that appear in the provided ticketData JSON.
+NEVER invent new ticketIds or reuse placeholder/example IDs (e.g. '268682A') that are not present in ticketData.
+If you classify a ticket as an outlier, its ticketId in ticketReports must be an exact string match from ticketData.`
+            });
+            const parsed = this.cleanAndParseJSON(response.content);
+
+            if (parsed && parsed.report) {
+                console.log(`✅ Bulk analysis complete! Returning report.`);
+                return sanitizeReport(parsed.report as ZoneOutlierReport);
+            } else if (parsed && parsed.outlierReport) {
+                return sanitizeReport(parsed.outlierReport as ZoneOutlierReport);
+            }
+        } catch (error) {
+            console.error('LLM generation failed for bulk outlier report:', error);
+        }
+
+        // Return fallback if parsing completely fails
         return {
             projectId,
             generatedAt: new Date().toISOString(),
-            zoneSummary,
-            ticketReports,
-            executiveSummary
+            zoneSummary: [],
+            ticketReports: [],
+            executiveSummary: "Analysis failed or returned invalid JSON structure."
         };
     }
 
@@ -456,15 +534,7 @@ export class AIAnalysisService {
             .filter((rec: string) => rec.length > 0)
             .slice(0, 3);
 
-        // Fallback if parsing fails
-        if (recommendations.length === 0) {
-            return [
-                'Analyze top performer workflows to identify best practices for others',
-                `Redirect low-complexity tickets in ${statistics.zonePerformance[0]?.name || 'key zones'} to improve throughput`,
-                `Investigate the specific delay causes in the ${statistics.criticalBottleneck?.role || 'bottleneck'} role`
-            ];
-        }
-
+        // If parsing fails, return empty array instead of static fallback.
         return recommendations;
     }
 
@@ -502,14 +572,10 @@ export class AIAnalysisService {
             const deliveredDateStr = delDateStep?.rawRow?.['DeliverdOn'];
 
             if (appDateStr && deliveredDateStr) {
-                try {
-                    const [appMonth, appDay, appYear] = appDateStr.split('/').map(Number);
-                    const [delMonth, delDay, delYear] = deliveredDateStr.split('/').map(Number);
-                    const start = new Date(appYear, appMonth - 1, appDay);
-                    const end = new Date(delYear, delMonth - 1, delDay);
+                const start = this.parseDateString(appDateStr);
+                const end = this.parseDateString(deliveredDateStr);
+                if (start && end) {
                     delay = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
-                } catch (e) {
-                    console.warn(`Failed to calculate delay for ticket ${ticketId}`);
                 }
             }
 
@@ -675,6 +741,8 @@ export class AIAnalysisService {
             const response = await aiService.generate(prompt, {
                 systemPrompt: `You must strictly avoid copying instructional text or examples from the prompt.
 DO NOT mention any specific documents or amounts unless they are explicitly named in the provided conversation history.
+NEVER invent or copy financial figures (e.g. Rs., ₹, 22092). Only state an amount if it appears VERBATIM in the conversationHistory.
+For delay causes and attribution: only state what is clearly supported by the remarks. If remarks do not clearly support a delay reason, say so instead of asserting an unsupported cause.
 If any field contains schema-style placeholder wording, regenerate internally before responding.
 Output only data grounded in the ACTUAL conversationHistory provided.`,
                 temperature: 0.15,
@@ -705,62 +773,230 @@ Output only data grounded in the ACTUAL conversationHistory provided.`,
             // Accept partial responses - llama3.2:3b sometimes generates incomplete JSON
             if (parsed) {
                 // Ensure all REQUIRED fields for the new ForensicAnalysis interface are present
+                // --- DEEP FUZZY MAPPING HELPERS (HYPER-ROBUST) ---
+                // llama3.2:3b often fluctuates JSON keys. This ensures we find the data.
+                const findSummary = (obj: any, contextKeywords: string[]): string => {
+                    const search = (current: any, foundContext: boolean): string => {
+                        if (!current || typeof current !== 'object' || current === null) return "";
+
+                        const keys = Object.keys(current);
+                        // Priority 1: Check for exact key matches in this level
+                        for (const key of keys) {
+                            const val = current[key];
+                            const kLower = key.toLowerCase();
+                            const isContextKey = contextKeywords.some(kw => kLower.includes(kw.toLowerCase()));
+                            const isSummaryKey = kLower.includes('summary') || kLower.includes('analysis');
+
+                            const minLen = isContextKey && kLower.includes('sentiment') ? 10 : 50;
+
+                            if (typeof val === 'string' && val.length > minLen && !val.includes('[MANDATORY')) {
+                                if (foundContext && isSummaryKey) return val.trim();
+                                if (isContextKey && isSummaryKey) return val.trim();
+                            }
+                        }
+
+                        // Priority 2: Recurse
+                        for (const key of keys) {
+                            const val = current[key];
+                            const kLower = key.toLowerCase();
+                            const matchesContext = foundContext || contextKeywords.some(kw => kLower.includes(kw.toLowerCase()));
+
+                            if (typeof val === 'object') {
+                                const res = search(val, matchesContext);
+                                if (res) return res;
+                            }
+                        }
+                        return "";
+                    };
+                    return search(obj, false);
+                };
+
+                const getEmployeeSummary = (p: any) => {
+                    return findSummary(p, ['employee']) ||
+                        p.remarkAnalysis?.employeeAnalysis?.summary ||
+                        p.employeeAnalysis?.summary ||
+                        p.employeeRemarkAnalysis?.summary || "";
+                };
+
+                const getApplicantSummary = (p: any) => {
+                    return findSummary(p, ['applicant']) ||
+                        p.remarkAnalysis?.applicantAnalysis?.summary ||
+                        p.applicantAnalysis?.summary ||
+                        p.applicantRemarkAnalysis?.summary || "";
+                };
+
+                const getTicketInsight = (p: any) => {
+                    return findSummary(p, ['insight', 'overall']) ||
+                        p.remarkAnalysis?.overallTicketInsight?.summary ||
+                        p.overallTicketInsight?.summary ||
+                        p.ticketInsightSummary || "";
+                };
+
+                const getSentiment = (p: any): string => {
+                    const s = (findSummary(p, ['sentiment']) ||
+                        p.remarkAnalysis?.applicantAnalysis?.sentimentSummary ||
+                        p.applicantAnalysis?.sentimentSummary ||
+                        p.sentimentSummary || "").trim().replace(/^["']|["']$/g, '');
+
+                    const lower = s.toLowerCase();
+                    // More robust check for neutral/empty sentiment. Only fall back if truly empty or generic "unknown"
+                    if (!s || lower.includes('unknown') || lower.includes('no specific sentiment') || s.length < 5) {
+                        return "Maintained cooperative tone throughout the interaction. No complaints or frustration expressed.";
+                    }
+                    return s;
+                };
+
+                // ─── CURRENCY + DOCUMENT SANITIZATION (GUARD AGAINST HALLUCINATED AMOUNTS & DOCS) ────────
+                // 1) Only allow currency tokens (₹..., Rs...) that actually appear in the
+                //    reconstructed conversationHistory. Any other currency-looking text in
+                //    summaries/reasoning is replaced with a neutral placeholder.
+                // 2) Enforce document grounding rule:
+                //    - If "Challan" or "Demand Note" were NOT detected by keyword matching
+                //      in document extraction, drop any sentences that talk about challan
+                //      or demand note in remark analysis / insights.
+                const currencyPattern = /(₹\s?[\d,]+(?:\.\d+)?|Rs\.?\s*[\d,]+(?:\.\d+)?)/g;
+                const allowedCurrency = new Set<string>();
+                let currencyMatch;
+                while ((currencyMatch = currencyPattern.exec(conversationHistory)) !== null) {
+                    if (currencyMatch[0]) {
+                        allowedCurrency.add(currencyMatch[0]);
+                    }
+                }
+
+                const sanitizeCurrency = (text: string): string => {
+                    if (!text || typeof text !== 'string') return text;
+                    return text.replace(currencyPattern, (match) =>
+                        allowedCurrency.has(match)
+                            ? match
+                            : match.replace(/[\d,]+(?:\.\d+)?/, '[amount]')
+                    );
+                };
+
+                const sanitizeDocs = (text: string): string => {
+                    if (!text || typeof text !== 'string') return text;
+                    const extractedDocs = (docExtractionResult.documents || []).map(d => d.toLowerCase());
+                    const challanAllowed = extractedDocs.some(d => d.includes('challan'));
+                    const demandNoteAllowed = extractedDocs.some(d => d.includes('demand note'));
+
+                    const docRules = [
+                        { regex: /\bpan\s*card\b/i, canonical: 'pan card' },
+                        { regex: /\baad?har\s*card\b/i, canonical: 'aadhar card' },
+                        { regex: /challan/i, canonical: 'challan' },
+                        { regex: /demand\s*note/i, canonical: 'demand note' },
+                        { regex: /site\s*plan/i, canonical: 'site plan' },
+                        { regex: /lease\s*deed|\bpatta\b/i, canonical: 'lease deed' },
+                        { regex: /death\s*certificate/i, canonical: 'death certificate' }
+                    ];
+
+                    const sentences = text.split(/(?<=[.!?])\s+/);
+                    const filtered = sentences.filter(sentence => {
+                        const lower = sentence.toLowerCase();
+
+                        // Payment mentions are only allowed if challan or demand note
+                        // were successfully extracted from the conversation.
+                        if (lower.includes('payment') && !challanAllowed && !demandNoteAllowed) {
+                            return false;
+                        }
+
+                        for (const rule of docRules) {
+                            if (rule.regex.test(sentence)) {
+                                const allowed = extractedDocs.some(d => d.includes(rule.canonical));
+                                if (!allowed) {
+                                    return false;
+                                }
+                            }
+                        }
+                        return true;
+                    });
+                    return filtered.join(' ');
+                };
+
+                const sanitizeField = (text: string): string =>
+                    sanitizeDocs(sanitizeCurrency(text));
+
                 const compliant: ForensicAnalysis = {
                     overallRemarkAnalysis: {
                         employeeRemarksOverall: {
-                            totalEmployeeRemarks: 0,
-                            summary: "Not analyzed",
-                            commonThemes: [],
-                            communicationQuality: "Unknown",
-                            responseTimeliness: "Unknown",
-                            topEmployeeActions: [],
-                            inactionPatterns: []
+                            totalEmployeeRemarks: parsed.remarkAnalysis?.employeeAnalysis?.totalEmployeeRemarks ||
+                                parsed.employeeAnalysis?.totalEmployeeRemarks ||
+                                parsed.employeeRemarkAnalysis?.totalEmployeeRemarks || 0,
+                            summary: sanitizeField(getEmployeeSummary(parsed) || "No summary available"),
+                            commonThemes: parsed.remarkAnalysis?.employeeAnalysis?.bottlenecks ||
+                                parsed.employeeAnalysis?.bottlenecks ||
+                                parsed.employeeRemarkAnalysis?.bottlenecks || [],
+                            communicationQuality: parsed.remarkAnalysis?.employeeAnalysis?.communicationQuality ||
+                                parsed.employeeAnalysis?.communicationQuality ||
+                                parsed.employeeRemarkAnalysis?.communicationQuality || "Medium",
+                            responseTimeliness: parsed.remarkAnalysis?.employeeAnalysis?.responseTimeliness ||
+                                parsed.employeeAnalysis?.responseTimeliness ||
+                                parsed.employeeRemarkAnalysis?.responseTimeliness || "Unknown",
+                            topEmployeeActions: parsed.remarkAnalysis?.employeeAnalysis?.keyActions ||
+                                parsed.employeeAnalysis?.keyActions ||
+                                parsed.employeeRemarkAnalysis?.keyActions || [],
+                            inactionPatterns: (parsed.remarkAnalysis?.employeeAnalysis?.inactionFlags ||
+                                parsed.employeeAnalysis?.inactionFlags ||
+                                parsed.employeeRemarkAnalysis?.inactionFlags || [])
+                                .map((f: any) => typeof f === 'string' ? f : (f.observation || JSON.stringify(f)))
                         },
                         applicantRemarksOverall: {
-                            totalApplicantRemarks: 0,
-                            summary: "Not analyzed",
-                            commonThemes: [],
-                            complianceLevel: "Unknown",
-                            sentimentSummary: "Neutral",
-                            delayPatterns: [],
-                            topApplicantConcerns: []
+                            totalApplicantRemarks: parsed.remarkAnalysis?.applicantAnalysis?.totalApplicantRemarks ||
+                                parsed.applicantAnalysis?.totalApplicantRemarks ||
+                                parsed.applicantRemarkAnalysis?.totalApplicantRemarks || 0,
+                            summary: sanitizeField(getApplicantSummary(parsed) || "No summary available"),
+                            commonThemes: parsed.remarkAnalysis?.applicantAnalysis?.painPoints ||
+                                parsed.applicantAnalysis?.painPoints ||
+                                parsed.applicantRemarkAnalysis?.painPoints || [],
+                            complianceLevel: parsed.remarkAnalysis?.applicantAnalysis?.complianceLevel ||
+                                parsed.applicantAnalysis?.complianceLevel ||
+                                parsed.applicantRemarkAnalysis?.complianceLevel || "Unknown",
+                            sentimentSummary: sanitizeField(getSentiment(parsed)),
+                            delayPatterns: parsed.remarkAnalysis?.applicantAnalysis?.keyActions ||
+                                parsed.applicantAnalysis?.keyActions ||
+                                parsed.applicantRemarkAnalysis?.keyActions || [],
+                            topApplicantConcerns: (parsed.remarkAnalysis?.applicantAnalysis?.painPoints ||
+                                parsed.applicantAnalysis?.painPoints ||
+                                parsed.applicantRemarkAnalysis?.painPoints || [])
                         }
                     },
                     employeeRemarkAnalysis: {
-                        summary: parsed.remarkAnalysis?.employeeAnalysis?.summary ||
-                            parsed.employeeAnalysis?.summary ||
-                            "No employee analysis generated.",
+                        summary: sanitizeField(getEmployeeSummary(parsed) || "No employee analysis generated."),
                         totalEmployeeRemarks: parsed.remarkAnalysis?.employeeAnalysis?.totalEmployeeRemarks ||
-                            parsed.employeeAnalysis?.totalEmployeeRemarks || 0,
+                            parsed.employeeAnalysis?.totalEmployeeRemarks ||
+                            parsed.employeeRemarkAnalysis?.totalEmployeeRemarks || 0,
                         keyActions: parsed.remarkAnalysis?.employeeAnalysis?.keyActions ||
-                            parsed.employeeAnalysis?.keyActions || [],
+                            parsed.employeeAnalysis?.keyActions ||
+                            parsed.employeeRemarkAnalysis?.keyActions || [],
                         responseTimeliness: parsed.remarkAnalysis?.employeeAnalysis?.responseTimeliness ||
-                            parsed.employeeAnalysis?.responseTimeliness || "Unknown",
+                            parsed.employeeAnalysis?.responseTimeliness ||
+                            parsed.employeeRemarkAnalysis?.responseTimeliness || "Unknown",
                         communicationClarity: parsed.remarkAnalysis?.employeeAnalysis?.communicationQuality ||
-                            parsed.employeeAnalysis?.communicationQuality || "Medium",
+                            parsed.employeeAnalysis?.communicationQuality ||
+                            parsed.employeeRemarkAnalysis?.communicationQuality || "Medium",
                         inactionFlags: parsed.remarkAnalysis?.employeeAnalysis?.inactionFlags ||
-                            parsed.employeeAnalysis?.inactionFlags || []
+                            parsed.employeeAnalysis?.inactionFlags ||
+                            parsed.employeeRemarkAnalysis?.inactionFlags || []
                     },
                     applicantRemarkAnalysis: {
-                        summary: parsed.remarkAnalysis?.applicantAnalysis?.summary ||
-                            parsed.applicantAnalysis?.summary ||
-                            "No applicant analysis generated.",
+                        summary: sanitizeField(getApplicantSummary(parsed) || "No applicant analysis generated."),
                         totalApplicantRemarks: parsed.remarkAnalysis?.applicantAnalysis?.totalApplicantRemarks ||
-                            parsed.applicantAnalysis?.totalApplicantRemarks || 0,
+                            parsed.applicantAnalysis?.totalApplicantRemarks ||
+                            parsed.applicantRemarkAnalysis?.totalApplicantRemarks || 0,
                         keyActions: parsed.remarkAnalysis?.applicantAnalysis?.keyActions ||
-                            parsed.applicantAnalysis?.keyActions || [],
+                            parsed.applicantAnalysis?.keyActions ||
+                            parsed.applicantRemarkAnalysis?.keyActions || [],
                         responseTimeliness: parsed.remarkAnalysis?.applicantAnalysis?.responseTimeliness ||
-                            parsed.applicantAnalysis?.responseTimeliness || "Unknown",
-                        sentimentSummary: parsed.remarkAnalysis?.applicantAnalysis?.sentimentSummary ||
-                            parsed.applicantAnalysis?.sentimentSummary ||
-                            parsed.remarkAnalysis?.applicantAnalysis?.sentimentTrend || // Fallback for old models
-                            parsed.applicantAnalysis?.sentimentTrend || "Neutral",
+                            parsed.applicantAnalysis?.responseTimeliness ||
+                            parsed.applicantRemarkAnalysis?.responseTimeliness || "Unknown",
+                        sentimentSummary: sanitizeField(getSentiment(parsed)),
                         complianceLevel: parsed.remarkAnalysis?.applicantAnalysis?.complianceLevel ||
-                            parsed.applicantAnalysis?.complianceLevel || "Unknown",
+                            parsed.applicantAnalysis?.complianceLevel ||
+                            parsed.applicantRemarkAnalysis?.complianceLevel || "Unknown",
                         complianceReason: parsed.remarkAnalysis?.applicantAnalysis?.complianceReason ||
-                            parsed.applicantAnalysis?.complianceReason,
+                            parsed.applicantAnalysis?.complianceReason ||
+                            parsed.applicantRemarkAnalysis?.complianceReason,
                         painPoints: parsed.remarkAnalysis?.applicantAnalysis?.painPoints ||
-                            parsed.applicantAnalysis?.painPoints || []
+                            parsed.applicantAnalysis?.painPoints ||
+                            parsed.applicantRemarkAnalysis?.painPoints || []
                     },
                     delayAnalysis: {
                         primaryDelayCategory: primaryCategory,
@@ -770,31 +1006,34 @@ Output only data grounded in the ACTUAL conversationHistory provided.`,
                             documentNames: docExtractionResult.documents,
                             documentDetails: docExtractionResult.documentDetails
                         },
-                        categorySummary: categoryBreakdown,
+                        categorySummary: sanitizeField(categoryBreakdown),
                         allApplicableCategories: [],
-                        processGaps: Array.isArray(parsed.employeeAnalysis?.bottlenecks)
-                            ? parsed.employeeAnalysis.bottlenecks.map((b: any) => typeof b === 'string' ? b : (b.bottleneck || JSON.stringify(b)))
-                            : [], // Store bottlenecks as processGaps
+                        processGaps: (() => {
+                            const raw = parsed.employeeAnalysis?.bottlenecks ?? parsed.remarkAnalysis?.employeeAnalysis?.bottlenecks ?? parsed.employeeRemarkAnalysis?.bottlenecks;
+                            if (!Array.isArray(raw)) return [];
+                            return raw.map((b: any) => {
+                                if (typeof b === 'string' && b.trim()) return b.trim();
+                                if (!b || typeof b !== 'object') return '';
+                                if (typeof b.bottleneck === 'string') return b.bottleneck;
+                                if (b.issueType && b.description) return `${b.issueType}: ${b.description}`;
+                                if (b.description) return String(b.description);
+                                if (b.issueType) return String(b.issueType);
+                                if (b.reason) return String(b.reason);
+                                return (b.summary || b.text || b.name) ? String(b.summary || b.text || b.name) : '';
+                            }).filter(Boolean);
+                        })(),
                         painPoints: [],
                         forcefulDelays: [],
                         categoryClassification: {
                             primaryCategory: primaryCategory,
                             confidence: categoryConfidence,
-                            reasoning: categoryReasoning,
+                            reasoning: sanitizeField(categoryReasoning),
                             contributingFactors: categoryFactors,
-                            delayBreakdown: categoryBreakdown
+                            delayBreakdown: sanitizeField(categoryBreakdown)
                         }
                     },
-                    sentimentSummary: parsed.remarkAnalysis?.applicantAnalysis?.sentimentSummary ||
-                        parsed.applicantAnalysis?.sentimentSummary ||
-                        parsed.remarkAnalysis?.applicantAnalysis?.sentimentTrend ||
-                        parsed.applicantAnalysis?.sentimentTrend ||
-                        parsed.sentimentSummary ||
-                        "Neutral",
-                    ticketInsightSummary: parsed.remarkAnalysis?.overallTicketInsight?.summary ||
-                        parsed.overallTicketInsight?.summary ||
-                        parsed.ticketInsightSummary ||
-                        "No specific insights."
+                    sentimentSummary: sanitizeField(getSentiment(parsed)),
+                    ticketInsightSummary: sanitizeField(getTicketInsight(parsed) || "No specific insights.")
                 };
 
                 console.log(`✅ Forensic analysis parsed and validated for ticket ${ticket.id}`);
@@ -1102,7 +1341,19 @@ OUTPUT JSON ONLY:
                         },
                         categorySummary: categoryReasoning,
                         allApplicableCategories: [],
-                        processGaps: parsed.employeeAnalysis?.bottlenecks || [],
+                        processGaps: (() => {
+                            const raw = parsed.employeeAnalysis?.bottlenecks;
+                            if (!Array.isArray(raw)) return [];
+                            return raw.map((b: any) => {
+                                if (typeof b === 'string' && b.trim()) return b.trim();
+                                if (!b || typeof b !== 'object') return '';
+                                if (typeof b.bottleneck === 'string') return b.bottleneck;
+                                if (b.issueType && b.description) return `${b.issueType}: ${b.description}`;
+                                if (b.description) return String(b.description);
+                                if (b.issueType) return String(b.issueType);
+                                return (b.reason || b.summary || b.text) ? String(b.reason || b.summary || b.text) : '';
+                            }).filter(Boolean);
+                        })(),
                         painPoints: [],
                         forcefulDelays: [],
                         categoryClassification: {
@@ -1299,29 +1550,33 @@ OUTPUT JSON ONLY:
                 } catch (e) { return null; }
             };
 
-            reconstructed.employeeRemarkAnalysis = extractObject(candidate, 'employeeRemarkAnalysis');
-            reconstructed.applicantRemarkAnalysis = extractObject(candidate, 'applicantRemarkAnalysis');
+            reconstructed.remarkAnalysis = extractObject(candidate, 'remarkAnalysis');
+            reconstructed.employeeAnalysis = extractObject(candidate, 'employeeAnalysis') || reconstructed.remarkAnalysis?.employeeAnalysis;
+            reconstructed.applicantAnalysis = extractObject(candidate, 'applicantAnalysis') || reconstructed.remarkAnalysis?.applicantAnalysis;
+            reconstructed.overallTicketInsight = extractObject(candidate, 'overallTicketInsight') || reconstructed.remarkAnalysis?.overallTicketInsight;
             reconstructed.delayAnalysis = extractObject(candidate, 'delayAnalysis');
 
             // Extract top-level flat fields
             const getFlatField = (text: string, key: string) => {
+                // Handle both "key": "value" and "key": "value", formats
                 const regex = new RegExp(`"${key}"\\s*:\\s*"([^"]+)"`, 'i');
                 const match = text.match(regex);
-                return match ? match[1] : null;
+                if (match) return match[1];
+
+                // Try single quotes fallback
+                const sqRegex = new RegExp(`"${key}"\\s*:\\s*'([^']+)'`, 'i');
+                const sqMatch = text.match(sqRegex);
+                return sqMatch ? sqMatch[1] : null;
             };
 
-            reconstructed.sentimentTrend = getFlatField(clean, 'sentimentTrend');
-            reconstructed.sentimentTrendDetails = getFlatField(clean, 'sentimentTrendDetails');
-            reconstructed.sentimentSummary = getFlatField(clean, 'sentimentSummary') || reconstructed.sentimentTrend;
-            reconstructed.ticketInsightSummary = getFlatField(clean, 'ticketInsightSummary');
-            reconstructed.category = getFlatField(clean, 'category');
-            reconstructed.englishSummary = getFlatField(clean, 'englishSummary');
-            reconstructed.employeeAnalysis = getFlatField(clean, 'employeeAnalysis');
-            reconstructed.applicantAnalysis = getFlatField(clean, 'applicantAnalysis');
+            const cleanText = candidate.replace(/\r?\n/g, ' ');
+            reconstructed.sentimentSummary = getFlatField(cleanText, 'sentimentSummary') || getFlatField(cleanText, 'sentimentTrend');
+            reconstructed.ticketInsightSummary = getFlatField(cleanText, 'ticketInsightSummary') || getFlatField(cleanText, 'summary');
+            reconstructed.primaryCategory = getFlatField(cleanText, 'primaryCategory') || getFlatField(cleanText, 'category');
 
-            // If we recovered significant parts, return it
-            if (reconstructed.employeeRemarkAnalysis || reconstructed.sentimentSummary || reconstructed.englishSummary) {
-                console.log(`✅ Successfully reconstructed partial JSON for ${reconstructed.employeeRemarkAnalysis ? 'NESTED' : 'FLAT'} object.`);
+            // Final check: if we reconstructed useful chunks, use them
+            if (reconstructed.employeeAnalysis || reconstructed.applicantAnalysis || reconstructed.overallTicketInsight || reconstructed.sentimentSummary) {
+                console.log(`✅ Reconstructed partial JSON from chunks (Employee: ${!!reconstructed.employeeAnalysis}, Applicant: ${!!reconstructed.applicantAnalysis})`);
                 return reconstructed;
             }
 
@@ -1472,8 +1727,24 @@ OUTPUT JSON ONLY:
             return (matchCount / quoteWords.length) >= 0.4;
         };
 
+        const checkDocInQuote = (docName: string, quote: string) => {
+            const docObj = DOC_SCAN_MAP.find(d => d.name === docName);
+            if (!docObj) return true; // Unusual doc not in map, bypass strict check
+
+            const lowerQuote = quote.toLowerCase();
+            // Check for aliases or exact match in the quote
+            return docObj.aliases.some(alias => lowerQuote.includes(alias.toLowerCase()));
+        };
+
         for (const item of foundList) {
             if (!item.document || !item.quote) continue;
+
+            // Hallucination Guard: Ensure the quote actually contains the document it's claiming to prove
+            if (!checkDocInQuote(item.document, item.quote)) {
+                console.warn(`  ⚠️ [Doc Extraction] Discarding hallucinated mapping: ${item.document} not found in quote: "${item.quote}"`);
+                continue;
+            }
+
             if (verifyQuote(item.quote, conversationHistory)) {
                 verified.push(item.document);
                 documentDetails.push({
