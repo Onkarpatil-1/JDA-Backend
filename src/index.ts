@@ -13,9 +13,9 @@ import { createRouter } from './api/routes.js';
 dotenv.config();
 
 const PORT = process.env.PORT || 3001;
-const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://localhost:11434';
+const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://65.0.23.203:11434';
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || 'llama3:8b';
-const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://localhost:5173';
+const CORS_ORIGIN = process.env.CORS_ORIGIN || 'http://65.0.23.203:5173';
 const API_PREFIX = process.env.API_PREFIX || '/api/v1';
 
 async function startServer() {
@@ -48,11 +48,8 @@ async function startServer() {
     console.log(`📝 ${health.message}`);
 
     if (health.status === 'unhealthy') {
-        console.error('❌ Ollama is not available. Please ensure:');
-        console.error('   1. Ollama is running (ollama serve)');
-        console.error(`   2. Model ${OLLAMA_MODEL} is installed (ollama pull ${OLLAMA_MODEL})`);
-        console.error('   3. Ollama is accessible at', OLLAMA_HOST);
-        process.exit(1);
+        console.warn('⚠️  Ollama is not available — server will start anyway.');
+        console.warn('   Ollama-dependent features will return errors until it is reachable.');
     }
 
     // API Routes
@@ -92,7 +89,7 @@ async function startServer() {
         console.log('');
         console.log('🚀 Ollama SLA Backend is running!');
         console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-        console.log(`📡 Server:        http://localhost:${PORT}`);
+        console.log(`📡 Server:        http://65.0.23.203:${PORT}`);
         console.log(`🤖 Model:         ${OLLAMA_MODEL}`);
         console.log(`🔗 Ollama Host:   ${OLLAMA_HOST}`);
         console.log(`🌐 CORS Origin:   ${CORS_ORIGIN}`);
